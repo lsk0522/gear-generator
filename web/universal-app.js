@@ -81,7 +81,9 @@
     if (adv) {
       document.getElementById(wraps.helixAngle).style.display = [1, 2].includes(gearIdx) ? "" : "none";
       document.getElementById(wraps.hand).style.display = [1, 2, 4].includes(gearIdx) ? "" : "none";
-      document.getElementById(wraps.coneAngle).style.display = gearIdx === 3 ? "" : "none";
+      // bevel pitch angles are derived from the tooth ratio (Σ = 90°),
+      // so the manual cone-angle field is not used.
+      document.getElementById(wraps.coneAngle).style.display = "none";
       document.getElementById(wraps.wormStarts).style.display = gearIdx === 4 ? "" : "none";
       document.getElementById(wraps.wormPitchDia).style.display = gearIdx === 4 ? "" : "none";
       document.getElementById(wraps.hole).style.display = gearIdx !== 5 ? "" : "none";
@@ -164,7 +166,7 @@
       case 2:
         return p.outerR + p.drawModule * 2;
       case 3:
-        return p.offset + p.tipBig2 + p.module * 2;
+        return p.R * 1.05;
       case 4:
         return Math.max(p.wormOuterR, p.wheelCenter + p.wheelTipR) + p.module * 2;
       case 5:
@@ -177,7 +179,91 @@
   // ------------------------------------------------------------------
   // Scene builders (drive = pinion/gear1 rotation in radians)
   // ------------------------------------------------------------------
-  function buildScene(g, p, scale, drive) {
+  // ---- bevel: axial (side) cross-section, Σ = 90°, apex at origin ----
+  // Draws the two pitch cones meeting at the apex plus each gear as a solid
+  // frustum band straddling its own axis — the classic bevel-pair section.
+  function bevelAxial(g, p, scale) {
+    const a = p.module,
+      d = 1.25 * p.module,
+      R = p.R,
+      b = p.b;
+    const thA = Math.atan(a / R),
+      thF = Math.atan(d / R);
+    const gDir = (ang, r) => ({ x: r * Math.cos(ang), y: r * Math.sin(ang) }); // gear axis +x
+    const pDir = (ang, r) => ({ x: r * Math.sin(ang), y: r * Math.cos(ang) }); // pinion axis +y
+
+    function dashLine(pt, strokeVar, dash, w, op) {
+      const el = svgEl("line", { x1: 0, y1: 0, x2: (pt.x * scale).toFixed(2), y2: (-pt.y * scale).toFixed(2) });
+      el.style.stroke = strokeVar;
+      el.style.strokeWidth = w || "0.8";
+      if (dash) el.style.strokeDasharray = dash;
+      if (op) el.style.opacity = op;
+      g.appendChild(el);
+    }
+
+    // shaft axes (dash-dot)
+    dashLine(gDir(0, R * 1.15), "#ffffff35", "8 3 2 3", "0.9");
+    dashLine(pDir(0, R * 1.15), "#ffffff35", "8 3 2 3", "0.9");
+
+    // translucent pitch cones (apex wedge spanning ±delta out to R)
+    function coneWedge(dirFn, delta, strokeVar) {
+      const pts = [{ x: 0, y: 0 }];
+      const N = 10;
+      for (let i = 0; i <= N; i++) pts.push(dirFn(-delta + (2 * delta * i) / N, R));
+      const path = svgEl("path", { d: loopToPathD(pts, scale) });
+      path.style.fill = `var(${strokeVar})`;
+      path.style.opacity = "0.12";
+      path.style.stroke = "none";
+      g.appendChild(path);
+    }
+    coneWedge(gDir, p.delta2, "--g2-stroke");
+    coneWedge(pDir, p.delta1, "--g1-stroke");
+
+    function frustum(dirFn, delta, fillVar, strokeVar) {
+      const fa = delta + thA; // face-cone half-angle span
+      const rf = delta - thF;
+      // solid teeth/rim band straddling the axis (outer end)
+      const poly = [dirFn(fa, R - b), dirFn(fa, R), dirFn(-fa, R), dirFn(-fa, R - b)];
+      fillPath(g, loopToPathD(poly, scale), fillVar, strokeVar, "1.4");
+      // hub connecting the inner band edge back toward the apex
+      const hi = dirFn(rf, R - b),
+        him = dirFn(-rf, R - b);
+      const ha2 = dirFn(rf, (R - b) * 0.25),
+        him2 = dirFn(-rf, (R - b) * 0.25);
+      fillPath(g, loopToPathD([ha2, hi, him, him2], scale), fillVar, strokeVar, "1", "0.5");
+      // pitch cone element lines (both sides), dashed
+      dashLine(dirFn(delta, R + 1.5 * p.module), `var(${strokeVar})`, "5 4", "0.9", "0.75");
+      dashLine(dirFn(-delta, R + 1.5 * p.module), `var(${strokeVar})`, "5 4", "0.9", "0.4");
+    }
+
+    // gear first (bigger, behind), then pinion
+    frustum(gDir, p.delta2, "--g2-fill", "--g2-stroke");
+    frustum(pDir, p.delta1, "--g1-fill", "--g1-stroke");
+
+    // apex + common pitch line (where the pair meshes)
+    dashLine(gDir(p.delta2, R), "#ffffffaa", "", "1.6", "0.9");
+    const apex = svgEl("circle", { cx: 0, cy: 0, r: 3.5 });
+    apex.style.fill = "#ffffffcc";
+    g.appendChild(apex);
+  }
+
+  // ---- bevel: Tredgold back-cone equivalent spur gears (true tooth form) ----
+  function bevelTredgold(g, p, scale, drive) {
+    const opt = { alpha: ALPHA };
+    const m = p.module;
+    const z1 = p.zv1r,
+      z2 = p.zv2r;
+    const center = p.rv1 + p.rv2;
+    const th = drive;
+    const phase2 = z2 % 2 === 0 ? -Math.PI / z2 : 0;
+    const a2 = phase2 - th * (z1 / z2);
+    fillPath(g, loopToPathD(Involute.involuteGear(z1, m, th, 0, 0, opt), scale), "--g1-fill", "--g1-stroke");
+    fillPath(g, loopToPathD(Involute.involuteGear(z2, m, a2, center, 0, opt), scale), "--g2-fill", "--g2-stroke");
+    pitchCircle(g, p.rv1, 0, 0, scale);
+    pitchCircle(g, p.rv2, center, 0, scale);
+  }
+
+  function buildScene(g, p, scale, drive, detail) {
     const pm = p.drawModule || p.module;
     const opt = { alpha: ALPHA };
 
@@ -210,14 +296,9 @@
       pitchCircle(g, p.pitchR1, p.offset, 0, scale);
       pitchCircle(g, (pm * p.z2) / 2, 0, 0, scale);
     } else if (p.gearIdx === 3) {
-      // bevel: 2D shows the large-end involute sections (addon lofts big->small)
-      const th = drive;
-      const phase2 = (p.z2 % 2 === 0 ? -Math.PI / p.z2 : 0);
-      const a2 = phase2 - th * (p.z1 / p.z2);
-      fillPath(g, loopToPathD(Involute.involuteGear(p.z1, p.module, th, 0, 0, opt), scale), "--g1-fill", "--g1-stroke");
-      fillPath(g, loopToPathD(Involute.involuteGear(p.z2, p.module, a2, p.offset, 0, opt), scale), "--g2-fill", "--g2-stroke");
-      pitchCircle(g, p.pitchR1, 0, 0, scale);
-      pitchCircle(g, p.pitchR2, p.offset, 0, scale);
+      // bevel pair: main = axial cone section, detail = Tredgold spur gears
+      if (detail) bevelTredgold(g, p, scale, drive);
+      else bevelAxial(g, p, scale);
     } else if (p.gearIdx === 4) {
       // worm (root circle + start marks) driving an involute wheel
       const th = drive;
@@ -273,14 +354,17 @@
     const extent = mainExtent(p);
     const scale = (W * 0.46) / extent;
     // centre the whole set: mid-point between the two parts
-    let midX = 0;
+    let midX = 0,
+      midY = 0;
     if (p.gearIdx === 0 || p.gearIdx === 1) midX = p.center / 2;
-    else if (p.gearIdx === 3) midX = p.offset / 2;
-    else if (p.gearIdx === 4) midX = p.wheelCenter / 2;
+    else if (p.gearIdx === 3) {
+      midX = p.R * 0.32;
+      midY = 0;
+    } else if (p.gearIdx === 4) midX = p.wheelCenter / 2;
     else if (p.gearIdx === 2) midX = p.offset / 2;
-    const g = svgEl("g", { transform: `translate(${W / 2 - midX * scale},${H / 2})` });
+    const g = svgEl("g", { transform: `translate(${W / 2 - midX * scale},${H / 2 + midY * scale})` });
     svg.appendChild(g);
-    buildScene(g, p, scale, drive);
+    buildScene(g, p, scale, drive, false);
   }
 
   function renderDetailSvg(p, drive) {
@@ -292,10 +376,10 @@
     const pm = p.drawModule || p.module;
     // show roughly a 7-module-wide window around the contact point
     const scale = (W * 0.5) / (7 * pm);
-    const cp = contactPoint(p);
+    const cp = p.gearIdx === 3 ? { x: p.rv1, y: 0 } : contactPoint(p);
     const g = svgEl("g", { transform: `translate(${W / 2 - cp.x * scale},${H / 2 + cp.y * scale})` });
     svg.appendChild(g);
-    buildScene(g, p, scale, drive);
+    buildScene(g, p, scale, drive, true);
   }
 
   function renderResults(p) {
@@ -326,11 +410,15 @@
       if (p.z2 - p.z1 < 10) p.warnings.push("내치 기어에서 링-피니언 잇수차가 작으면(<10) 치 간섭이 생기기 쉽습니다.");
     } else if (p.gearIdx === 3) {
       rows.push(
-        ["피니언 잇수", p.z1, false],
-        ["기어 잇수", p.z2, false],
-        ["원추각", ((p.coneAngle * 180) / Math.PI).toFixed(1) + " deg", false]
+        ["피니언 잇수 (z1)", p.z1, false],
+        ["기어 잇수 (z2)", p.z2, false],
+        ["축각 Σ", "90°", false],
+        ["피치각 δ1 / δ2", `${((p.delta1 * 180) / Math.PI).toFixed(1)}° / ${((p.delta2 * 180) / Math.PI).toFixed(1)}°`, false],
+        ["외부 원추거리 R", fmt(p.R) + " mm", false],
+        ["페이스폭 b", fmt(p.b) + " mm", false],
+        ["등가 잇수 zv1 / zv2", `${p.zv1.toFixed(1)} / ${p.zv2.toFixed(1)}`, false]
       );
-      p.warnings.push("베벨은 3D에서 원추형 로프트입니다. 2D는 큰 끝단(large-end) 인벌류트 단면만 보여줍니다.");
+      p.warnings.push("베벨은 원뿔형 3D입니다. 메인=축단면(Σ=90°), 확대=Tredgold 등가 평기어(치형·맞물림)로 표현합니다.");
     } else if (p.gearIdx === 4) {
       rows.push(
         ["웜 줄 수", p.starts, false],
@@ -389,7 +477,8 @@
         { layer: "RING_TEETH", loops: [Involute.involuteRing(p.z2, pm, phaseRing, 0, 0, opt)] },
       ];
     }
-    if (p.gearIdx === 3) return [{ layer: "BEVEL_PINION", loops: [Involute.involuteGear(p.z1, p.module, 0, 0, 0, opt)] }];
+    if (p.gearIdx === 3)
+      return [{ layer: "BEVEL_PINION_TREDGOLD", loops: [Involute.involuteGear(p.zv1r, p.module, 0, 0, 0, opt)] }];
     if (p.gearIdx === 4)
       return [
         { layer: "WORM_ROOT", loops: [Involute.circlePoints(p.wormRootR, 0, 0, 240)] },
@@ -410,7 +499,8 @@
       return [{ layer: "GEAR", loops: [Involute.involuteGear(p.z2, pm, phase2, p.center, 0, opt)] }];
     }
     if (p.gearIdx === 2) return [{ layer: "PINION", loops: [Involute.involuteGear(p.z1, pm, 0, p.offset, 0, opt)] }];
-    if (p.gearIdx === 3) return [{ layer: "BEVEL_GEAR", loops: [Involute.involuteGear(p.z2, p.module, 0, p.offset, 0, opt)] }];
+    if (p.gearIdx === 3)
+      return [{ layer: "BEVEL_GEAR_TREDGOLD", loops: [Involute.involuteGear(p.zv2r, p.module, 0, p.rv1 + p.rv2, 0, opt)] }];
     if (p.gearIdx === 4) return [{ layer: "WHEEL", loops: [Involute.involuteGear(p.wheelTeeth, p.module, 0, p.wheelCenter, 0, opt)] }];
     if (p.gearIdx === 5) return [{ layer: "PINION", loops: [Involute.involuteGear(p.z1, p.module, -Math.PI / 2, 0, p.pitchR1, opt)] }];
     return [];

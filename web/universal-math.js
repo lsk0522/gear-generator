@@ -279,28 +279,38 @@
 
   function bevelParams(p) {
     const [z1, z2] = deriveTeeth(p.ratio, p.pinionTeeth, p.advanced, p.gearTeeth, 3, p.wormStarts);
-    const offset = p.module * ((z1 + z2) / 2) + p.module * 2;
-    const g1 = pitchRootTip(p.module, z1);
-    const g2 = pitchRootTip(p.module, z2);
-    const taper1 = clamp(p.face * Math.tan(p.coneAngle), p.module * 0.5, g1.pitchR * 0.65);
-    const taper2 = clamp(p.face * Math.tan(p.coneAngle), p.module * 0.5, g2.pitchR * 0.65);
-    const rootSmall1 = Math.max(p.module * 0.8, g1.rootR - taper1);
-    const tipSmall1 = Math.max(rootSmall1 + p.module * 0.4, g1.tipR - taper1);
-    const rootSmall2 = Math.max(p.module * 0.8, g2.rootR - taper2);
-    const tipSmall2 = Math.max(rootSmall2 + p.module * 0.4, g2.tipR - taper2);
+    // straight bevel pair on intersecting axes, shaft angle Σ = 90°.
+    // Pitch cone angles follow directly from the tooth ratio.
+    const Sigma = Math.PI / 2;
+    const delta1 = Math.atan2(Math.sin(Sigma), z2 / z1 + Math.cos(Sigma)); // pinion
+    const delta2 = Sigma - delta1; // gear
+    const r1 = (p.module * z1) / 2; // large-end pitch radii
+    const r2 = (p.module * z2) / 2;
+    const R = r1 / Math.sin(delta1); // outer cone distance (shared)
+    const b = Math.min(p.face, R / 3); // face width, capped at R/3
+    // Tredgold back-cone virtual spur gears (for the true involute tooth form)
+    const zv1 = z1 / Math.cos(delta1);
+    const zv2 = z2 / Math.cos(delta2);
     return {
       z1,
       z2,
-      offset,
-      rootBig1: g1.rootR,
-      tipBig1: g1.tipR,
-      rootSmall1,
-      tipSmall1,
-      rootBig2: g2.rootR,
-      tipBig2: g2.tipR,
-      rootSmall2,
-      tipSmall2,
-      summary: `${z1} : ${z2}  (원추각 ${((p.coneAngle * 180) / Math.PI).toFixed(1)}°)`,
+      Sigma,
+      delta1,
+      delta2,
+      r1,
+      r2,
+      R,
+      b,
+      zv1,
+      zv2,
+      zv1r: Math.max(6, Math.round(zv1)),
+      zv2r: Math.max(6, Math.round(zv2)),
+      // convenience radii used by the detail (Tredgold) view
+      rv1: (p.module * Math.round(zv1)) / 2,
+      rv2: (p.module * Math.round(zv2)) / 2,
+      pitchR1: r1,
+      pitchR2: r2,
+      summary: `${z1} : ${z2}  (Σ=90°, 피치각 δ1=${((delta1 * 180) / Math.PI).toFixed(1)}° / δ2=${((delta2 * 180) / Math.PI).toFixed(1)}°)`,
     };
   }
 
