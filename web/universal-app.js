@@ -18,6 +18,9 @@
     coneAngle: $("#un-coneAngle"),
     wormStarts: $("#un-wormStarts"),
     wormPitchDia: $("#un-wormPitchDia"),
+    drive: $("#un-drive"),
+    driveVal: $("#un-drive-val"),
+    play: $("#un-play"),
     resultGrid: $("#un-result-grid"),
     warnings: $("#un-warnings"),
     svgMain: $("#un-svg-main"),
@@ -28,6 +31,8 @@
   };
 
   if (!els.type) return; // panel not present
+
+  const ALPHA = (20 * Math.PI) / 180;
 
   function num(el, fallback) {
     const v = parseFloat(el.value);
@@ -119,94 +124,107 @@
     return `M ${CX + R},${CY} A ${R},${R} 0 1 0 ${CX - R},${CY} A ${R},${R} 0 1 0 ${CX + R},${CY} Z`;
   }
 
-  function rectPathD(x0, y0, x1, y1, scale) {
-    const X0 = x0 * scale,
-      Y0 = -y0 * scale,
-      X1 = x1 * scale,
-      Y1 = -y1 * scale;
-    return `M ${X0},${Y0} L ${X1},${Y0} L ${X1},${Y1} L ${X0},${Y1} Z`;
-  }
-
-  // ------------------------------------------------------------------
-  // extents per gear type, used to fit the main SVG viewBox
-  // ------------------------------------------------------------------
-  function mainExtent(p) {
-    switch (p.gearIdx) {
-      case 0:
-      case 1:
-        return Math.max(p.tipR1, p.center + p.tipR2) + p.module * 2;
-      case 2:
-        return p.outerR + p.module * 2;
-      case 3:
-        return p.offset + p.tipBig2 + p.module * 2;
-      case 4:
-        return Math.max(p.wormOuterR, p.wheelCenter + p.wheelTipR) + p.module * 2;
-      case 5:
-        return Math.max(p.rackLength / 2, p.pinionCenterY + p.tipR1) + p.module * 2;
-      default:
-        return 100;
-    }
-  }
-
-  function drawExternalGear(g, zTeeth, rootR, tipR, rotation, cx, cy, scale, fillVar, strokeVar, opacity) {
-    const outline = UniMath.externalGearOutline(zTeeth, rootR, tipR, rotation, cx, cy);
-    const path = svgEl("path", { d: loopToPathD(outline, scale) });
-    path.style.fill = `var(${fillVar})`;
+  function fillPath(g, d, fillVar, strokeVar, sw, opacity, evenodd) {
+    const attrs = { d };
+    if (evenodd) attrs["fill-rule"] = "evenodd";
+    const path = svgEl("path", attrs);
+    path.style.fill = fillVar ? `var(${fillVar})` : "none";
     path.style.stroke = `var(${strokeVar})`;
-    path.style.strokeWidth = "1.2";
+    path.style.strokeWidth = sw || "1.2";
     if (opacity) path.style.opacity = opacity;
     g.appendChild(path);
     return path;
   }
 
-  function drawDashedOutline(g, zTeeth, rootR, tipR, rotation, cx, cy, scale, strokeVar) {
-    const outline = UniMath.externalGearOutline(zTeeth, rootR, tipR, rotation, cx, cy);
-    const path = svgEl("path", { d: loopToPathD(outline, scale), fill: "none" });
-    path.style.stroke = `var(${strokeVar})`;
-    path.style.strokeWidth = "1";
-    path.style.strokeDasharray = "4 3";
-    path.style.opacity = "0.8";
-    g.appendChild(path);
+  // The line-of-centres pitch point where meshing contact happens — the best
+  // place to zoom in and confirm the teeth roll without interference.
+  function contactPoint(p) {
+    switch (p.gearIdx) {
+      case 0:
+      case 1:
+        return { x: p.pitchR1, y: 0 };
+      case 2:
+        return { x: p.offset + p.pitchR1, y: 0 };
+      case 3:
+        return { x: p.pitchR1 || p.rootBig1, y: 0 };
+      case 4:
+        return { x: p.wormPitchR, y: 0 };
+      case 5:
+        return { x: 0, y: 0 };
+      default:
+        return { x: 0, y: 0 };
+    }
   }
 
-  function buildScene(g, p, scale) {
-    if (p.gearIdx === 0) {
-      drawExternalGear(g, p.z1, p.rootR1, p.tipR1, 0, 0, 0, scale, "--g1-fill", "--g1-stroke");
-      drawExternalGear(g, p.z2, p.rootR2, p.tipR2, Math.PI / Math.max(p.z2, 1), p.center, 0, scale, "--g2-fill", "--g2-stroke");
-    } else if (p.gearIdx === 1) {
-      drawExternalGear(g, p.z1, p.rootR1, p.tipR1, 0, 0, 0, scale, "--g1-fill", "--g1-stroke");
-      drawDashedOutline(g, p.z1, p.rootR1, p.tipR1, p.twist1, 0, 0, scale, "--g1-stroke");
-      drawExternalGear(g, p.z2, p.rootR2, p.tipR2, 0, p.center, 0, scale, "--g2-fill", "--g2-stroke");
-      drawDashedOutline(g, p.z2, p.rootR2, p.tipR2, p.twist2, p.center, 0, scale, "--g2-stroke");
+  function mainExtent(p) {
+    switch (p.gearIdx) {
+      case 0:
+      case 1:
+        return Math.max(p.tipR1, p.center + p.tipR2) + p.drawModule * 2;
+      case 2:
+        return p.outerR + p.drawModule * 2;
+      case 3:
+        return p.offset + p.tipBig2 + p.module * 2;
+      case 4:
+        return Math.max(p.wormOuterR, p.wheelCenter + p.wheelTipR) + p.module * 2;
+      case 5:
+        return Math.max(p.rackLength / 2, p.pitchR1 * 2) + p.drawModule * 2;
+      default:
+        return 100;
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Scene builders (drive = pinion/gear1 rotation in radians)
+  // ------------------------------------------------------------------
+  function buildScene(g, p, scale, drive) {
+    const pm = p.drawModule || p.module;
+    const opt = { alpha: ALPHA };
+
+    if (p.gearIdx === 0 || p.gearIdx === 1) {
+      // external involute pair
+      const th = drive;
+      const phase2 = (p.z2 % 2 === 0 ? -Math.PI / p.z2 : 0);
+      const a2 = phase2 - th * (p.z1 / p.z2);
+      if (p.gearIdx === 1) {
+        // helical: show the twisted top section faintly behind
+        fillPath(g, loopToPathD(Involute.involuteGear(p.z1, pm, th + p.twist1, 0, 0, opt), scale), null, "--g1-stroke", "1", "0.35");
+        fillPath(g, loopToPathD(Involute.involuteGear(p.z2, pm, a2 + p.twist2, p.center, 0, opt), scale), null, "--g2-stroke", "1", "0.35");
+      }
+      fillPath(g, loopToPathD(Involute.involuteGear(p.z1, pm, th, 0, 0, opt), scale), "--g1-fill", "--g1-stroke");
+      fillPath(g, loopToPathD(Involute.involuteGear(p.z2, pm, a2, p.center, 0, opt), scale), "--g2-fill", "--g2-stroke");
+      centreHole(g, p, 0, 0, scale);
+      centreHole(g, p, p.center, 0, scale);
+      pitchCircle(g, p.pitchR1, 0, 0, scale);
+      pitchCircle(g, p.pitchR2, p.center, 0, scale);
     } else if (p.gearIdx === 2) {
-      const prof = UniMath.internalGearProfile(p.z2, p.innerRootR, p.innerTipR, p.outerR, 0, 220);
-      const path = svgEl("path", {
-        d: ringPathD([prof.outer, prof.inner], scale),
-        "fill-rule": "evenodd",
-      });
-      path.style.fill = "var(--g1-fill)";
-      path.style.stroke = "var(--g1-stroke)";
-      path.style.strokeWidth = "1.2";
-      g.appendChild(path);
-      drawExternalGear(g, p.z1, p.pinionRootR, p.pinionTipR, 0, p.offset, 0, scale, "--g2-fill", "--g2-stroke");
+      // internal: ring + pinion, same direction
+      const th = drive;
+      const phaseRing = Math.PI / p.z2;
+      const ringAng = phaseRing + th * (p.z1 / p.z2);
+      const ringInner = Involute.involuteRing(p.z2, pm, ringAng, 0, 0, opt);
+      const ringOuter = Involute.circlePoints(p.outerR, 0, 0, 220);
+      fillPath(g, ringPathD([ringOuter, ringInner], scale), "--g1-fill", "--g1-stroke", "1.2", null, true);
+      fillPath(g, loopToPathD(Involute.involuteGear(p.z1, pm, th, p.offset, 0, opt), scale), "--g2-fill", "--g2-stroke");
+      centreHole(g, p, p.offset, 0, scale);
+      pitchCircle(g, p.pitchR1, p.offset, 0, scale);
+      pitchCircle(g, (pm * p.z2) / 2, 0, 0, scale);
     } else if (p.gearIdx === 3) {
-      drawExternalGear(g, p.z1, p.rootBig1, p.tipBig1, 0, 0, 0, scale, "--g1-fill", "--g1-stroke");
-      drawDashedOutline(g, p.z1, p.rootSmall1, p.tipSmall1, Math.PI / p.z1 * 0.15, 0, 0, scale, "--g1-stroke");
-      drawExternalGear(g, p.z2, p.rootBig2, p.tipBig2, 0, p.offset, 0, scale, "--g2-fill", "--g2-stroke");
-      drawDashedOutline(g, p.z2, p.rootSmall2, p.tipSmall2, Math.PI / p.z2 * 0.15, p.offset, 0, scale, "--g2-stroke");
+      // bevel: 2D shows the large-end involute sections (addon lofts big->small)
+      const th = drive;
+      const phase2 = (p.z2 % 2 === 0 ? -Math.PI / p.z2 : 0);
+      const a2 = phase2 - th * (p.z1 / p.z2);
+      fillPath(g, loopToPathD(Involute.involuteGear(p.z1, p.module, th, 0, 0, opt), scale), "--g1-fill", "--g1-stroke");
+      fillPath(g, loopToPathD(Involute.involuteGear(p.z2, p.module, a2, p.offset, 0, opt), scale), "--g2-fill", "--g2-stroke");
+      pitchCircle(g, p.pitchR1, 0, 0, scale);
+      pitchCircle(g, p.pitchR2, p.offset, 0, scale);
     } else if (p.gearIdx === 4) {
-      const root = svgEl("path", { d: circlePathD(p.wormRootR, 0, 0, scale) });
-      root.style.fill = "var(--g1-fill)";
-      root.style.stroke = "var(--g1-stroke)";
-      root.style.strokeWidth = "1.2";
-      g.appendChild(root);
-      const outer = svgEl("path", { d: circlePathD(p.wormOuterR, 0, 0, scale), fill: "none" });
-      outer.style.stroke = "var(--g1-stroke)";
-      outer.style.strokeWidth = "1";
-      outer.style.strokeDasharray = "3 3";
-      g.appendChild(outer);
+      // worm (root circle + start marks) driving an involute wheel
+      const th = drive;
+      const root = fillPath(g, circlePathD(p.wormRootR, 0, 0, scale), "--g1-fill", "--g1-stroke");
+      fillPath(g, circlePathD(p.wormOuterR, 0, 0, scale), null, "--g1-stroke", "1");
       for (let s = 0; s < p.starts; s++) {
-        const a = (2 * Math.PI * s) / p.starts;
+        const a = (2 * Math.PI * s) / p.starts + th;
         const line = svgEl("line", {
           x1: (p.wormRootR * Math.cos(a) * scale).toFixed(2),
           y1: (-p.wormRootR * Math.sin(a) * scale).toFixed(2),
@@ -217,28 +235,36 @@
         line.style.strokeWidth = "2";
         g.appendChild(line);
       }
-      drawExternalGear(g, p.wheelTeeth, p.wheelRootR, p.wheelTipR, 0, p.wheelCenter, 0, scale, "--g2-fill", "--g2-stroke");
-      drawDashedOutline(g, p.wheelTeeth, p.wheelRootR, p.wheelTipR, p.wheelTwist, p.wheelCenter, 0, scale, "--g2-stroke");
+      const wheelAng = -th * (p.starts / p.wheelTeeth);
+      fillPath(g, loopToPathD(Involute.involuteGear(p.wheelTeeth, p.module, wheelAng, p.wheelCenter, 0, opt), scale), "--g2-fill", "--g2-stroke");
+      pitchCircle(g, p.wheelPitchR, p.wheelCenter, 0, scale);
     } else if (p.gearIdx === 5) {
-      const bar = svgEl("path", { d: rectPathD(-p.rackLength / 2, -p.rackBarH, p.rackLength / 2, 0, scale) });
-      bar.style.fill = "var(--g1-fill)";
-      bar.style.stroke = "var(--g1-stroke)";
-      bar.style.strokeWidth = "1.2";
-      g.appendChild(bar);
-      const startX = -p.rackLength / 2 + p.pitch / 2;
-      for (let i = 0; i < p.zRack; i++) {
-        const tooth = UniMath.rackToothPoints(startX + i * p.pitch, p.module, 0, p.rackTipY);
-        const path = svgEl("path", { d: loopToPathD(tooth, scale) });
-        path.style.fill = "var(--g1-fill)";
-        path.style.stroke = "var(--g1-stroke)";
-        path.style.strokeWidth = "1";
-        g.appendChild(path);
-      }
-      drawExternalGear(g, p.z1, p.rootR1, p.tipR1, Math.PI / 2, 0, p.pinionCenterY, scale, "--g2-fill", "--g2-stroke");
+      // rack + pinion. pinion above rack, rack pitch line at y=0.
+      const th = drive;
+      const rack = Involute.involuteRack(p.zRack, p.module, 0, -p.pitchR1 * th, -p.rackLength / 2, p.rackLength / 2, opt);
+      fillPath(g, loopToPathD(rack.bar, scale), "--g1-fill", "--g1-stroke", "1.2");
+      for (const tooth of rack.teeth) fillPath(g, loopToPathD(tooth, scale), "--g1-fill", "--g1-stroke", "1");
+      // pinion tooth should point down into the rack: offset rotation by -90°
+      fillPath(g, loopToPathD(Involute.involuteGear(p.z1, p.module, th - Math.PI / 2, 0, p.pitchR1, opt), scale), "--g2-fill", "--g2-stroke");
+      centreHole(g, p, 0, p.pitchR1, scale);
+      pitchCircle(g, p.pitchR1, 0, p.pitchR1, scale);
     }
   }
 
-  function renderMainSvg(p) {
+  function centreHole(g, p, cx, cy, scale) {
+    if (!p.hole || p.hole <= 0) return;
+    fillPath(g, circlePathD(p.hole / 2, cx, cy, scale), null, "--border", "1");
+  }
+
+  function pitchCircle(g, r, cx, cy, scale) {
+    const c = svgEl("path", { d: circlePathD(r, cx, cy, scale), fill: "none" });
+    c.style.stroke = "#ffffff33";
+    c.style.strokeWidth = "0.75";
+    c.style.strokeDasharray = "3 4";
+    g.appendChild(c);
+  }
+
+  function renderMainSvg(p, drive) {
     const svg = els.svgMain;
     clear(svg);
     const W = 900,
@@ -246,40 +272,37 @@
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const extent = mainExtent(p);
     const scale = (W * 0.46) / extent;
-    const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
+    // centre the whole set: mid-point between the two parts
+    let midX = 0;
+    if (p.gearIdx === 0 || p.gearIdx === 1) midX = p.center / 2;
+    else if (p.gearIdx === 3) midX = p.offset / 2;
+    else if (p.gearIdx === 4) midX = p.wheelCenter / 2;
+    else if (p.gearIdx === 2) midX = p.offset / 2;
+    const g = svgEl("g", { transform: `translate(${W / 2 - midX * scale},${H / 2})` });
     svg.appendChild(g);
-    buildScene(g, p, scale);
+    buildScene(g, p, scale, drive);
   }
 
-  function renderDetailSvg(p) {
+  function renderDetailSvg(p, drive) {
     const svg = els.svgDetail;
     clear(svg);
     const W = 500,
       H = 500;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const extent = mainExtent(p);
-    const scale = ((W * 0.46) / extent) * 4;
-    // focus on the primary gear/part near its rightmost point (a tooth).
-    let focusX = 0,
-      focusY = 0;
-    if (p.gearIdx === 5) {
-      focusX = 0;
-      focusY = p.pinionCenterY;
-    } else if (p.gearIdx === 2) {
-      focusX = p.offset;
-    } else if (p.gearIdx === 4) {
-      focusX = 0;
-    }
-    const tipR = p.tipR1 || p.wormOuterR || p.pinionTipR || p.rootBig1 || 10;
-    const g = svgEl("g", { transform: `translate(${W / 2 - focusX * scale + tipR * scale * 0.55},${H / 2 + focusY * scale})` });
+    const pm = p.drawModule || p.module;
+    // show roughly a 7-module-wide window around the contact point
+    const scale = (W * 0.5) / (7 * pm);
+    const cp = contactPoint(p);
+    const g = svgEl("g", { transform: `translate(${W / 2 - cp.x * scale},${H / 2 + cp.y * scale})` });
     svg.appendChild(g);
-    buildScene(g, p, scale);
+    buildScene(g, p, scale, drive);
   }
 
   function renderResults(p) {
     const rows = [
       ["기어 종류", p.gearTypeName, true],
       ["요약", p.summary, false],
+      ["치형", "인벌류트 (압력각 20°, 전깊이)", false],
       ["모듈", fmt(p.module) + " mm", false],
       ["감속비 (입력)", p.ratio.toFixed(2) + " : 1", false],
     ];
@@ -292,6 +315,7 @@
         ["기어 피치 반경", fmt(p.pitchR2) + " mm", false],
         ["축간 거리", fmt(p.center) + " mm", false]
       );
+      if (p.z1 < 17) p.warnings.push(`피니언 잇수 ${p.z1} < 17 → 표준 인벌류트에서 언더컷(치 뿌리 간섭)이 생길 수 있습니다.`);
     } else if (p.gearIdx === 2) {
       rows.push(
         ["피니언 잇수", p.z1, false],
@@ -299,34 +323,32 @@
         ["피니언 오프셋", fmt(p.offset) + " mm", false],
         ["링 외경", fmt(p.outerR * 2) + " mm", false]
       );
+      if (p.z2 - p.z1 < 10) p.warnings.push("내치 기어에서 링-피니언 잇수차가 작으면(<10) 치 간섭이 생기기 쉽습니다.");
     } else if (p.gearIdx === 3) {
       rows.push(
         ["피니언 잇수", p.z1, false],
         ["기어 잇수", p.z2, false],
-        ["축간 오프셋", fmt(p.offset) + " mm", false],
         ["원추각", ((p.coneAngle * 180) / Math.PI).toFixed(1) + " deg", false]
       );
+      p.warnings.push("베벨은 3D에서 원추형 로프트입니다. 2D는 큰 끝단(large-end) 인벌류트 단면만 보여줍니다.");
     } else if (p.gearIdx === 4) {
       rows.push(
         ["웜 줄 수", p.starts, false],
         ["웜휠 잇수", p.wheelTeeth, false],
         ["웜 피치 반경", fmt(p.wormPitchR) + " mm", false],
-        ["웜휠 중심 거리", fmt(p.wheelCenter) + " mm", false],
         ["리드각", ((p.leadAngle * 180) / Math.PI).toFixed(1) + " deg", false]
       );
+      p.warnings.push("웜은 3D에서 나선 스윕입니다. 2D는 웜 단면(원)과 인벌류트 웜휠만 보여줍니다.");
     } else if (p.gearIdx === 5) {
       rows.push(
         ["피니언 잇수", p.z1, false],
         ["랙 칸 수", p.zRack, false],
-        ["랙 길이", fmt(p.rackLength) + " mm", false],
-        ["피니언 중심 Y", fmt(p.pinionCenterY) + " mm", false]
+        ["랙 길이", fmt(p.rackLength) + " mm", false]
       );
+      if (p.z1 < 17) p.warnings.push(`피니언 잇수 ${p.z1} < 17 → 언더컷 가능.`);
     }
     els.resultGrid.innerHTML = rows
-      .map(
-        ([k, v, hl]) =>
-          `<div class="row${hl ? " hl" : ""}"><div class="k">${k}</div><div class="v">${v}</div></div>`
-      )
+      .map(([k, v, hl]) => `<div class="row${hl ? " hl" : ""}"><div class="k">${k}</div><div class="v">${v}</div></div>`)
       .join("");
   }
 
@@ -341,7 +363,7 @@
   }
 
   // ------------------------------------------------------------------
-  // DXF export
+  // DXF export (static, drive = 0)
   // ------------------------------------------------------------------
   function download(filename, text) {
     const blob = new Blob([text], { type: "application/dxf" });
@@ -356,42 +378,41 @@
   }
 
   function part1Layers(p) {
+    const pm = p.drawModule || p.module;
+    const opt = { alpha: ALPHA };
     if (p.gearIdx === 0 || p.gearIdx === 1)
-      return [{ layer: "PINION", loops: [UniMath.externalGearOutline(p.z1, p.rootR1, p.tipR1, 0, 0, 0)] }];
+      return [{ layer: "PINION", loops: [Involute.involuteGear(p.z1, pm, 0, 0, 0, opt)] }];
     if (p.gearIdx === 2) {
-      const prof = UniMath.internalGearProfile(p.z2, p.innerRootR, p.innerTipR, p.outerR, 0, 360);
-      return [{ layer: "RING_OUTER", loops: [prof.outer] }, { layer: "RING_TEETH", loops: [prof.inner] }];
-    }
-    if (p.gearIdx === 3) return [{ layer: "PINION_BIG", loops: [UniMath.externalGearOutline(p.z1, p.rootBig1, p.tipBig1, 0, 0, 0)] }];
-    if (p.gearIdx === 4) return [{ layer: "WORM_ROOT", loops: [UniMath.circlePoints(p.wormRootR, 0, 0, 240)] }, { layer: "WORM_OUTER", loops: [UniMath.circlePoints(p.wormOuterR, 0, 0, 240)] }];
-    if (p.gearIdx === 5) {
-      const startX = -p.rackLength / 2 + p.pitch / 2;
-      const loops = [
-        [
-          { x: -p.rackLength / 2, y: -p.rackBarH },
-          { x: p.rackLength / 2, y: -p.rackBarH },
-          { x: p.rackLength / 2, y: 0 },
-          { x: -p.rackLength / 2, y: 0 },
-        ],
+      const phaseRing = Math.PI / p.z2;
+      return [
+        { layer: "RING_OUTER", loops: [Involute.circlePoints(p.outerR, 0, 0, 360)] },
+        { layer: "RING_TEETH", loops: [Involute.involuteRing(p.z2, pm, phaseRing, 0, 0, opt)] },
       ];
-      for (let i = 0; i < p.zRack; i++) loops.push(UniMath.rackToothPoints(startX + i * p.pitch, p.module, 0, p.rackTipY));
-      return [{ layer: "RACK", loops }];
+    }
+    if (p.gearIdx === 3) return [{ layer: "BEVEL_PINION", loops: [Involute.involuteGear(p.z1, p.module, 0, 0, 0, opt)] }];
+    if (p.gearIdx === 4)
+      return [
+        { layer: "WORM_ROOT", loops: [Involute.circlePoints(p.wormRootR, 0, 0, 240)] },
+        { layer: "WORM_OUTER", loops: [Involute.circlePoints(p.wormOuterR, 0, 0, 240)] },
+      ];
+    if (p.gearIdx === 5) {
+      const rack = Involute.involuteRack(p.zRack, p.module, 0, 0, -p.rackLength / 2, p.rackLength / 2, opt);
+      return [{ layer: "RACK", loops: [rack.bar, ...rack.teeth] }];
     }
     return [];
   }
 
   function part2Layers(p) {
-    if (p.gearIdx === 0 || p.gearIdx === 1)
-      return [
-        {
-          layer: "GEAR",
-          loops: [UniMath.externalGearOutline(p.z2, p.rootR2, p.tipR2, Math.PI / Math.max(p.z2, 1), p.center, 0)],
-        },
-      ];
-    if (p.gearIdx === 2) return [{ layer: "PINION", loops: [UniMath.externalGearOutline(p.z1, p.pinionRootR, p.pinionTipR, 0, p.offset, 0)] }];
-    if (p.gearIdx === 3) return [{ layer: "GEAR_BIG", loops: [UniMath.externalGearOutline(p.z2, p.rootBig2, p.tipBig2, 0, p.offset, 0)] }];
-    if (p.gearIdx === 4) return [{ layer: "WHEEL", loops: [UniMath.externalGearOutline(p.wheelTeeth, p.wheelRootR, p.wheelTipR, 0, p.wheelCenter, 0)] }];
-    if (p.gearIdx === 5) return [{ layer: "PINION", loops: [UniMath.externalGearOutline(p.z1, p.rootR1, p.tipR1, Math.PI / 2, 0, p.pinionCenterY)] }];
+    const pm = p.drawModule || p.module;
+    const opt = { alpha: ALPHA };
+    if (p.gearIdx === 0 || p.gearIdx === 1) {
+      const phase2 = p.z2 % 2 === 0 ? -Math.PI / p.z2 : 0;
+      return [{ layer: "GEAR", loops: [Involute.involuteGear(p.z2, pm, phase2, p.center, 0, opt)] }];
+    }
+    if (p.gearIdx === 2) return [{ layer: "PINION", loops: [Involute.involuteGear(p.z1, pm, 0, p.offset, 0, opt)] }];
+    if (p.gearIdx === 3) return [{ layer: "BEVEL_GEAR", loops: [Involute.involuteGear(p.z2, p.module, 0, p.offset, 0, opt)] }];
+    if (p.gearIdx === 4) return [{ layer: "WHEEL", loops: [Involute.involuteGear(p.wheelTeeth, p.module, 0, p.wheelCenter, 0, opt)] }];
+    if (p.gearIdx === 5) return [{ layer: "PINION", loops: [Involute.involuteGear(p.z1, p.module, -Math.PI / 2, 0, p.pitchR1, opt)] }];
     return [];
   }
 
@@ -402,14 +423,30 @@
       download("universal_gear_set_full.dxf", DXFWriter.buildDXF([...part1Layers(p), ...part2Layers(p)]));
   }
 
+  // ------------------------------------------------------------------
+  // Render + animation
+  // ------------------------------------------------------------------
+  let currentParams = null;
+
+  function driveRad() {
+    return (num(els.drive, 0) * Math.PI) / 180;
+  }
+
+  function redrawGeometry() {
+    if (!currentParams) return;
+    const d = driveRad();
+    renderMainSvg(currentParams, d);
+    renderDetailSvg(currentParams, d);
+  }
+
   function render() {
     updateFieldVisibility();
     const input = readInputs();
     const p = UniMath.deriveParams(input);
+    currentParams = p;
     renderResults(p);
     renderWarnings(p);
-    renderMainSvg(p);
-    renderDetailSvg(p);
+    redrawGeometry();
     wireDownloads(p);
   }
 
@@ -435,6 +472,47 @@
     els.wormStarts,
     els.wormPitchDia,
   ].forEach((el) => el && el.addEventListener("input", scheduleRender));
+
+  els.drive.addEventListener("input", () => {
+    els.driveVal.textContent = els.drive.value + "°";
+    redrawGeometry();
+  });
+
+  // play / pause meshing animation
+  let playing = false;
+  let rafId = null;
+  let lastT = 0;
+  function tick(t) {
+    if (!playing) return;
+    if (!lastT) lastT = t;
+    const dt = (t - lastT) / 1000;
+    lastT = t;
+    let v = num(els.drive, 0) + dt * 45; // 45 deg/sec
+    v = ((v % 360) + 360) % 360;
+    els.drive.value = v.toFixed(1);
+    els.driveVal.textContent = Math.round(v) + "°";
+    redrawGeometry();
+    rafId = requestAnimationFrame(tick);
+  }
+  els.play.addEventListener("click", () => {
+    playing = !playing;
+    els.play.textContent = playing ? "⏸ 정지" : "▶ 재생";
+    if (playing) {
+      lastT = 0;
+      rafId = requestAnimationFrame(tick);
+    } else if (rafId) {
+      cancelAnimationFrame(rafId);
+    }
+  });
+
+  // pause the animation when the tab is hidden to save CPU
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && playing) {
+      playing = false;
+      els.play.textContent = "▶ 재생";
+      if (rafId) cancelAnimationFrame(rafId);
+    }
+  });
 
   render();
 })();

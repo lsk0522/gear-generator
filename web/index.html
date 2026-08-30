@@ -253,11 +253,12 @@
   <aside class="sidebar">
     <h1>범용 기어 생성기<span class="pill">Universal v2</span></h1>
     <p class="subtitle">
-      기어 종류·감속비·모듈만 입력하면 바로 생성됩니다. 정밀 인벌류트 치형
-      대신 안정적으로 생성되는 단순 치형 근사를 사용합니다 (
-      <code>fusion360_addin/UniversalGearGenerator</code> 애드인의 스케치
-      단계와 동일한 수식). 애드인은 이 2D 외곽선을 돌출/로프트/스윕해서
-      3D 솔리드를 만들지만, 웹 미리보기는 항상 2D 외곽선까지만 보여줍니다.
+      기어 종류·감속비·모듈만 입력하면 바로 생성됩니다. 웹은 표준 20°
+      전깊이 <strong>인벌류트 치형</strong>으로 그려 한 쌍이 간섭 없이
+      맞물려 회전합니다 (▶ 재생으로 확인). 잇수 배치·축간거리 산정은
+      <code>fusion360_addin/UniversalGearGenerator</code> 애드인과 같지만,
+      치형은 애드인의 단순 근사 대신 진짜 인벌류트를 사용합니다. 웹
+      미리보기는 항상 2D입니다.
     </p>
 
     <div class="field">
@@ -332,6 +333,14 @@
       </div>
     </details>
 
+    <div class="field">
+      <label>구동 회전 <span class="unit" id="un-drive-val">0°</span></label>
+      <div class="slider-row">
+        <button id="un-play" class="dl" style="flex:0 0 auto;padding:6px 12px;">▶ 재생</button>
+        <input id="un-drive" type="range" min="0" max="360" step="1" value="0" />
+      </div>
+    </div>
+
     <div class="results">
       <h2>계산 결과</h2>
       <div id="un-warnings"></div>
@@ -345,12 +354,14 @@
     </div>
 
     <div class="footer-note">
-      단순 치형 근사(4점/이: 이뿌리·상승 플랭크·이끝·하강 플랭크)로, 실제
-      인벌류트 치형이 아닙니다 — 애드인 원본과 동일한 단순화입니다.
-      헬리컬/베벨/웜은 3D에서는 비틀림/테이퍼/나선 스윕이 들어가지만, 2D
-      웹 미리보기는 애드인의 바닥 스케치(비틀림 전 단면)를 그대로 보여줍니다.
-      생성된 형상은 개념 검증용이며, 실제 제작 전 강도/치형/공차 검증이
-      필요합니다. Fusion 360 애드인: <code>fusion360_addin/UniversalGearGenerator</code>.
+      표준 20° 전깊이 인벌류트(치두께 = 반피치, 미세 백래시 0.05·m,
+      이끝 +1·m / 이뿌리 −1.25·m)로 생성합니다. 평/헬리컬/내치/랙은
+      실제로 맞물려 회전하고, 잇수 17 미만이면 언더컷 경고를 표시합니다.
+      헬리컬은 전단(transverse) 단면 + 비틀림 오프셋을 반투명으로,
+      베벨은 큰 끝단 단면을, 웜은 웜 단면(원)+인벌류트 웜휠을 보여줍니다
+      (3D 나선/테이퍼는 웹에서 생략). 생성 형상은 개념 검증용이며 제작 전
+      강도/공차 검증이 필요합니다. Fusion 360 애드인:
+      <code>fusion360_addin/UniversalGearGenerator</code>.
     </div>
   </aside>
 
@@ -380,6 +391,7 @@
 <script src="app.js"></script>
 <script src="cycloidal-math.js"></script>
 <script src="cycloidal-app.js"></script>
+<script src="involute-math.js"></script>
 <script src="universal-math.js"></script>
 <script src="universal-app.js"></script>
 <script src="tabs.js"></script>

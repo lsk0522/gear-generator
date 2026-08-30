@@ -201,10 +201,12 @@
     const [z1, z2] = deriveTeeth(p.ratio, p.pinionTeeth, p.advanced, p.gearTeeth, 0, p.wormStarts);
     const g1 = pitchRootTip(p.module, z1);
     const g2 = pitchRootTip(p.module, z2);
-    const center = p.module * ((z1 + z2) / 2) + p.module * 0.15;
+    // exact standard centre distance so the involute pair meshes
+    const center = p.module * ((z1 + z2) / 2);
     return {
       z1,
       z2,
+      drawModule: p.module,
       pitchR1: g1.pitchR,
       rootR1: g1.rootR,
       tipR1: g1.tipR,
@@ -226,13 +228,16 @@
   function helicalParams(p) {
     const [z1, z2] = deriveTeeth(p.ratio, p.pinionTeeth, p.advanced, p.gearTeeth, 1, p.wormStarts);
     const beta = p.helixAngle;
-    const g1 = pitchRootTip(p.module, z1);
-    const g2 = pitchRootTip(p.module, z2);
-    const center = (p.module * z1) / (2 * Math.cos(beta)) + (p.module * z2) / (2 * Math.cos(beta)) + p.module * 0.15;
+    // transverse module in the drawn (transverse) plane
+    const mt = p.module / Math.cos(beta);
+    const g1 = pitchRootTip(mt, z1);
+    const g2 = pitchRootTip(mt, z2);
+    const center = mt * ((z1 + z2) / 2);
     const opposite = p.hand === RIGHT_HAND ? LEFT_HAND : RIGHT_HAND;
     return {
       z1,
       z2,
+      drawModule: mt,
       pitchR1: g1.pitchR,
       rootR1: g1.rootR,
       tipR1: g1.tipR,
@@ -243,13 +248,14 @@
       twist1: twistAngle(p.face, beta, g1.pitchR, p.hand),
       twist2: twistAngle(p.face, beta, g2.pitchR, opposite),
       actualRatio: z2 / z1,
-      summary: `${z1} : ${z2}  (헬릭스각 ${((beta * 180) / Math.PI).toFixed(1)}°, ${p.hand})`,
+      summary: `${z1} : ${z2}  (헬릭스각 ${((beta * 180) / Math.PI).toFixed(1)}°, ${p.hand}, 전단모듈 ${mt.toFixed(3)})`,
     };
   }
 
   function internalParams(p) {
     let [z1, z2] = deriveTeeth(p.ratio, p.pinionTeeth, p.advanced, p.gearTeeth, 2, p.wormStarts);
     if (z2 <= z1 + 4) z2 = z1 + Math.max(8, Math.round(z1 * 0.5));
+    // exact internal centre distance = r_ring - r_pinion
     const offset = (p.module * (z2 - z1)) / 2;
     const ringPitchR = (p.module * z2) / 2;
     const innerRootR = ringPitchR + 1.25 * p.module;
@@ -259,6 +265,7 @@
     return {
       z1,
       z2,
+      drawModule: p.module,
       offset,
       innerRootR,
       innerTipR,
@@ -328,7 +335,8 @@
   function rackParams(p) {
     const [z1, zRack] = deriveTeeth(p.ratio, p.pinionTeeth, p.advanced, p.gearTeeth, 5, p.wormStarts);
     const g1 = pitchRootTip(p.module, z1);
-    const pinionCenterY = p.module * (z1 / 2 + 3);
+    // pinion pitch circle tangent to rack pitch line: centre at +r1 above it
+    const pinionCenterY = g1.pitchR;
     const pitch = Math.PI * p.module;
     const rackLength = zRack * pitch;
     const rackTipY = 2.25 * p.module;
@@ -336,6 +344,7 @@
     return {
       z1,
       zRack,
+      drawModule: p.module,
       pitchR1: g1.pitchR,
       rootR1: g1.rootR,
       tipR1: g1.tipR,
