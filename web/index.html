@@ -11,6 +11,7 @@
   <button class="tab active" data-tab="hd">하모닉 드라이브</button>
   <button class="tab" data-tab="cyclo">사이클로이드 감속기</button>
   <button class="tab" data-tab="uni">범용 기어</button>
+  <button class="tab" data-tab="planet">유성 감속기</button>
 </div>
 
 <section class="tabpanel" id="panel-hd">
@@ -399,9 +400,98 @@
 <script src="app.js"></script>
 <script src="cycloidal-math.js"></script>
 <script src="cycloidal-app.js"></script>
+<section class="tabpanel" id="panel-planet" hidden>
+<div class="app">
+  <aside class="sidebar">
+    <h1>유성 감속기 생성기<span class="pill">Planetary</span></h1>
+    <p class="subtitle">
+      선기어(Sun) · 유성기어(Planet) · 링기어(Ring) · 캐리어(Carrier)로 구성된
+      단일 스테이지 유성 감속기입니다. 표준 20° 인벌류트 치형으로,
+      링 잇수 = 선 + 2·유성 구속을 자동 적용하고 ▶ 재생으로 실제 맞물림
+      회전을 확인합니다. 웹 미리보기는 항상 2D입니다.
+    </p>
+
+    <div class="field">
+      <label>모듈 <span class="unit">mm</span></label>
+      <input id="pl-module" type="number" step="0.1" min="0.1" value="1.5" />
+    </div>
+    <div class="field">
+      <label>선기어 잇수 (Zs)</label>
+      <input id="pl-sun" type="number" step="1" min="8" value="15" />
+    </div>
+    <div class="field">
+      <label>유성기어 잇수 (Zp)</label>
+      <input id="pl-planet" type="number" step="1" min="8" value="15" />
+    </div>
+    <div class="field">
+      <label>유성기어 개수</label>
+      <input id="pl-count" type="number" step="1" min="2" max="8" value="3" />
+    </div>
+    <div class="field">
+      <label>구성 (감속 방식)</label>
+      <select id="pl-config">
+        <option value="ring">링 고정 · 선 입력 · 캐리어 출력 (감속 1+Zr/Zs)</option>
+        <option value="sun">선 고정 · 링 입력 · 캐리어 출력 (감속 1+Zs/Zr)</option>
+        <option value="carrier">캐리어 고정 · 선 입력 · 링 출력 (역전 −Zr/Zs)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>구동 회전(입력) <span class="unit" id="pl-drive-val">0°</span></label>
+      <div class="slider-row">
+        <button id="pl-play" class="dl" style="flex:0 0 auto;padding:6px 12px;">▶ 재생</button>
+        <input id="pl-drive" type="range" min="0" max="360" step="1" value="0" />
+      </div>
+    </div>
+
+    <div class="results">
+      <h2>계산 결과</h2>
+      <div id="pl-warnings"></div>
+      <div id="pl-result-grid" class="result-grid"></div>
+    </div>
+
+    <div class="downloads">
+      <button id="pl-dl-sun" class="dl"><span class="swatch" style="background:var(--cs-stroke)"></span>선기어 DXF</button>
+      <button id="pl-dl-planet" class="dl"><span class="swatch" style="background:var(--fs-stroke)"></span>유성기어 DXF</button>
+      <button id="pl-dl-ring" class="dl"><span class="swatch" style="background:var(--wg-stroke)"></span>링기어 DXF</button>
+      <button id="pl-dl-all" class="dl"><span class="swatch" style="background:#fff"></span>전체 DXF (레이어 포함)</button>
+    </div>
+
+    <div class="footer-note">
+      단일 스테이지 유성기어열. 조립 조건 (Zs+Zr)이 유성 개수로 나누어
+      떨어져야 모든 유성이 등간격으로 맞물립니다 — 안 되면 경고를 표시합니다.
+      선-유성은 외접, 유성-링은 내접 인벌류트 맞물림이며 링 잇수는
+      Zr = Zs + 2·Zp로 고정됩니다. 개념 검증용이며 제작 전 검증이 필요합니다.
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="viewer-row">
+      <div class="panel">
+        <h3>
+          전체 미리보기
+          <span class="legend">
+            <span><i style="background:var(--cs-stroke)"></i>선</span>
+            <span><i style="background:var(--fs-stroke)"></i>유성</span>
+            <span><i style="background:var(--wg-stroke)"></i>링</span>
+            <span><i style="background:var(--accent2)"></i>캐리어</span>
+          </span>
+        </h3>
+        <svg id="pl-svg-main" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="panel">
+        <h3>치형 확대 (선-유성 맞물림)</h3>
+        <svg id="pl-svg-detail" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+  </main>
+</div>
+</section>
+
 <script src="involute-math.js"></script>
 <script src="universal-math.js"></script>
 <script src="universal-app.js"></script>
+<script src="planetary-app.js"></script>
 <script src="tabs.js"></script>
 </body>
 </html>
