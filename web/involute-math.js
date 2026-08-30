@@ -128,24 +128,31 @@
     const alpha = opts.alpha != null ? opts.alpha : (20 * Math.PI) / 180;
     const ha = opts.ha != null ? opts.ha : 1.0;
     const hf = opts.hf != null ? opts.hf : 1.25;
-    const flankSteps = opts.flankSteps || 14;
+    const flankSteps = opts.flankSteps || 22;
     const rootSteps = opts.rootSteps || 4;
     const tipSteps = opts.tipSteps || 4;
+    const backlash = opts.backlash != null ? opts.backlash : 0.05 * m;
     rotation = rotation || 0;
 
     const r = (m * z) / 2;
     const rb = r * Math.cos(alpha);
-    // internal: addendum toward centre (smaller), dedendum outward (larger)
-    const ra = r - ha * m; // tip (innermost)
-    const rf = r + hf * m; // root (outermost of the tooth space)
-    const rInnerFlank = Math.max(rb, ra);
+    // internal gear: tooth tips point inward (smaller R), roots outward.
+    // Its addendum reaches toward the centre and its dedendum sits outside
+    // the pitch circle, the mirror of an external gear.
+    const ra = Math.max(r - ha * m, rb + 1e-4); // tip (innermost usable)
+    const rf = r + hf * m; // root (outermost of the ring tooth)
 
-    const psi = Math.PI / (2 * z);
     const invA = inv(alpha);
+    // half tooth angle at pitch, slightly thinned by backlash so the mating
+    // planet/pinion tooth clears the ring tooth space
+    const psi = Math.PI / (2 * z) - backlash / 2 / r;
 
+    // Internal-gear flank offset: sign of (inv(aR) - invA) is FLIPPED versus
+    // an external gear, so the tooth narrows toward the inner tip and widens
+    // toward the outer root — the correct concave internal involute.
     function flankOffset(R) {
       const aR = Math.acos(clamp(rb / Math.max(R, rb), -1, 1));
-      return psi + invA - inv(aR);
+      return psi + (inv(aR) - invA);
     }
 
     const toothPitch = (2 * Math.PI) / z;
@@ -154,7 +161,7 @@
     for (let k = 0; k < z; k++) {
       const base = rotation + k * toothPitch;
 
-      // land at root radius (outermost) between tooth k-1 and k
+      // outer root land between the previous tooth and this one
       const offRoot = flankOffset(rf);
       const landStart = base - toothPitch + offRoot;
       const landEnd = base - offRoot;
@@ -163,20 +170,20 @@
         pts.push(polar(rf, ang, cx, cy));
       }
 
-      // right flank: root(large R) -> tip(small R), negative side
+      // right flank: root (outer, large R) -> tip (inner, small R)
       for (let i = 0; i <= flankSteps; i++) {
-        const R = rf - ((rf - rInnerFlank) * i) / flankSteps;
+        const R = rf - ((rf - ra) * i) / flankSteps;
         pts.push(polar(R, base - flankOffset(R), cx, cy));
       }
-      // tip arc across (innermost)
-      const offTip = flankOffset(rInnerFlank);
+      // inner tip arc across
+      const offTip = flankOffset(ra);
       for (let i = 1; i < tipSteps; i++) {
         const ang = base - offTip + ((2 * offTip) * i) / tipSteps;
         pts.push(polar(ra, ang, cx, cy));
       }
-      // left flank: tip -> root, positive side
+      // left flank: tip (inner) -> root (outer)
       for (let i = 0; i <= flankSteps; i++) {
-        const R = rInnerFlank + ((rf - rInnerFlank) * i) / flankSteps;
+        const R = ra + ((rf - ra) * i) / flankSteps;
         pts.push(polar(R, base + flankOffset(R), cx, cy));
       }
     }
