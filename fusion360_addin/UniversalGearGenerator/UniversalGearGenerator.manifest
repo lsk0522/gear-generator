@@ -1,0 +1,14 @@
+{
+    "autodeskProduct": "Fusion360",
+    "type": "addin",
+    "id": "e3a89e90-c11f-4d94-9b0c-universalgear01",
+    "author": "Antigravity CAD AI",
+    "description": {
+        "": "Generates various types of gears: Spur, Helical, Internal, Bevel, Worm, Worm Wheel, and Rack.",
+        "ko-KR": "다양한 유형의 기어(평기어, 헬리컬, 내치, 베벨, 웜, 웜휠, 랙)를 생성하는 종합 기어 생성기입니다."
+    },
+    "version": "1.0.0",
+    "runOnStartup": false,
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}

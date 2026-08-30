@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.mdpi.com)",
+      "Read(//c/Users/LSK0522/AppData/Local/Temp/claude/C--Users-LSK0522-OneDrive-----------------------Harmoic-Drive/87d03205-99e0-4778-ac69-f0b62118d14d/scratchpad/**)",
+      "Bash(python3 hd_math_prototype.py)",
+      "Bash(python hd_math_prototype.py)",
+      "Bash(python -c ' *)",
+      "Bash(node -e ' *)"
+    ]
+  }
+}

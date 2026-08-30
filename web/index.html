@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>기어 제너레이터</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="tabbar">
+  <button class="tab active" data-tab="hd">하모닉 드라이브</button>
+  <button class="tab" data-tab="cyclo">사이클로이드 감속기</button>
+</div>
+
+<section class="tabpanel" id="panel-hd">
+<div class="app">
+  <aside class="sidebar">
+    <h1>하모닉 드라이브 생성기<span class="pill">CTP</span></h1>
+    <p class="subtitle">
+      모듈 · 외경 · 내경만 입력하면 사이클로이드 치형 하모닉 드라이브
+      (서큘러스플라인 + 플렉스스플라인 + 웨이브제너레이터 캠)를 즉시 계산합니다.
+    </p>
+
+    <div class="field">
+      <label>모듈 (m) <span class="unit">mm</span></label>
+      <input id="in-m" type="number" step="0.05" min="0.05" value="1.0" />
+    </div>
+    <div class="field">
+      <label>외경 (서큘러스플라인 OD) <span class="unit">mm</span></label>
+      <input id="in-od" type="number" step="0.5" min="1" value="120" />
+    </div>
+    <div class="field">
+      <label>내경 (플렉스스플라인 보어 ID) <span class="unit">mm</span></label>
+      <input id="in-id" type="number" step="0.5" min="1" value="109" />
+    </div>
+
+    <details class="advanced">
+      <summary>고급 설정</summary>
+      <div class="adv-grid">
+        <div class="field">
+          <label>이끝 높이 계수 ha*</label>
+          <input id="in-ha" type="number" step="0.05" value="1.0" />
+        </div>
+        <div class="field">
+          <label>이뿌리 높이 계수 hf*</label>
+          <input id="in-hf" type="number" step="0.05" value="1.25" />
+        </div>
+        <div class="field">
+          <label>최대 반경변형 계수 w0*</label>
+          <input id="in-w0" type="number" step="0.05" value="1.0" />
+        </div>
+        <div class="field">
+          <label>CS 림 두께 (×m)</label>
+          <input id="in-csrim" type="number" step="0.5" value="3.0" />
+        </div>
+        <div class="field">
+          <label>잇수차 (z2−z1)</label>
+          <input id="in-toothdiff" type="number" step="1" min="2" value="2" />
+        </div>
+      </div>
+    </details>
+
+    <div class="field">
+      <label>파형발생기(WG) 회전각 <span class="unit" id="in-rotation-val">0°</span></label>
+      <input id="in-rotation" type="range" min="0" max="360" step="1" value="0" />
+    </div>
+
+    <div class="results">
+      <h2>계산 결과</h2>
+      <div id="warnings"></div>
+      <div id="result-grid" class="result-grid"></div>
+    </div>
+
+    <div class="downloads">
+      <button id="dl-cs" class="dl"><span class="swatch" style="background:var(--cs-stroke)"></span>서큘러스플라인 DXF</button>
+      <button id="dl-fs" class="dl"><span class="swatch" style="background:var(--fs-stroke)"></span>플렉스스플라인 DXF</button>
+      <button id="dl-wg" class="dl"><span class="swatch" style="background:var(--wg-stroke)"></span>웨이브제너레이터 캠 DXF</button>
+      <button id="dl-all" class="dl"><span class="swatch" style="background:#fff"></span>전체 조립 DXF (레이어 포함)</button>
+    </div>
+
+    <div class="footer-note">
+      Yao et al., <em>"A Novel Cycloid Tooth Profile for Harmonic Drive with
+      Fully Conjugate Features"</em>, Actuators 2025, 14(4), 187 의 사이클로이드
+      치형 구성식(Eq. 9–13)을 기반으로 합니다. 논문의 이뿌리 envelope 정밀보정
+      (Sec. 3.2–3.4)은 단순화하여 여유 있는 필렛으로 대체했습니다 — 이뿌리는
+      접촉면이 아니므로 치형 성능에는 영향이 없습니다. 생성된 형상은 개념 검증용
+      기하 데이터이며, 실제 제작 전 반드시 강도/탄성/공차 검증이 필요합니다.
+      Fusion 360 애드인: <code>fusion360_addin/HarmonicDriveGenerator</code>.
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="viewer-row">
+      <div class="panel">
+        <h3>
+          전체 조립 미리보기
+          <span class="legend">
+            <span><i style="background:var(--cs-stroke)"></i>CS(고정)</span>
+            <span><i style="background:var(--fs-stroke)"></i>FS(가요)</span>
+            <span><i style="background:var(--wg-stroke)"></i>WG 캠</span>
+          </span>
+        </h3>
+        <svg id="svg-main" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="panel">
+        <h3>치형 확대 (상단부)</h3>
+        <svg id="svg-detail" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+  </main>
+</div>
+</section>
+
+<section class="tabpanel" id="panel-cyclo" hidden>
+<div class="app">
+  <aside class="sidebar">
+    <h1>사이클로이드 감속기 생성기<span class="pill">Cycloidal</span></h1>
+    <p class="subtitle">
+      감속비 · 핀 피치원 반지름 · 핀 반지름 · 편심량만 입력하면 사이클로이드
+      디스크 외곽선과 핀 배치를 즉시 계산합니다. (포락선 방식,
+      <code>fusion360_addin/CycloidalGearGenerator</code> 애드인과 동일 수식)
+    </p>
+
+    <div class="field">
+      <label>감속비 (1 : i)</label>
+      <input id="cy-ratio" type="number" step="1" min="2" value="11" />
+    </div>
+    <div class="field">
+      <label>핀 피치원 반지름 (R) <span class="unit">mm</span></label>
+      <input id="cy-R" type="number" step="0.5" min="1" value="30" />
+    </div>
+    <div class="field">
+      <label>핀/롤러 반지름 (Rr) <span class="unit">mm</span></label>
+      <input id="cy-Rr" type="number" step="0.1" min="0.1" value="3" />
+    </div>
+    <div class="field">
+      <label>편심량 (E) <span class="unit">mm</span></label>
+      <input id="cy-E" type="number" step="0.05" min="0.01" value="1.5" />
+    </div>
+    <div class="field">
+      <label>디스크 두께 <span class="unit">mm</span></label>
+      <input id="cy-thickness" type="number" step="0.5" min="0.5" value="5" />
+    </div>
+
+    <details class="advanced">
+      <summary>고급 설정</summary>
+      <div class="adv-grid">
+        <div class="field">
+          <label>베어링 보어 지름</label>
+          <input id="cy-bore" type="number" step="0.5" value="15" />
+        </div>
+        <div class="field">
+          <label>출력핀 개수</label>
+          <input id="cy-holecount" type="number" step="1" min="3" value="6" />
+        </div>
+        <div class="field">
+          <label>출력핀 PCD 반지름</label>
+          <input id="cy-holepcd" type="number" step="0.5" value="18" />
+        </div>
+        <div class="field">
+          <label>출력핀 지름</label>
+          <input id="cy-holedia" type="number" step="0.1" value="6" />
+        </div>
+        <div class="field">
+          <label>디스크-핀 공차</label>
+          <input id="cy-toldisc" type="number" step="0.01" value="0.1" />
+        </div>
+        <div class="field">
+          <label>외곽선 해상도</label>
+          <input id="cy-points" type="number" step="10" min="60" value="360" />
+        </div>
+      </div>
+    </details>
+
+    <div class="results">
+      <h2>계산 결과</h2>
+      <div id="cy-warnings"></div>
+      <div id="cy-result-grid" class="result-grid"></div>
+    </div>
+
+    <div class="downloads">
+      <button id="cy-dl-disc" class="dl"><span class="swatch" style="background:var(--cs-stroke)"></span>디스크 DXF</button>
+      <button id="cy-dl-ring" class="dl"><span class="swatch" style="background:var(--fs-stroke)"></span>핀 링 DXF</button>
+      <button id="cy-dl-all" class="dl"><span class="swatch" style="background:#fff"></span>전체 DXF (레이어 포함)</button>
+    </div>
+
+    <div class="footer-note">
+      포락선(envelope) 방식 사이클로이드 치형입니다. 편심량이 0이면 디스크가
+      모든 핀에 동시 접촉(이론 포락선)해 끼므로 실제 회전을 위해선 디스크-핀
+      공차를 양수로 두어야 합니다 (기본 0.1mm). 곡선 부호 규약·공차·베어링
+      끼워맞춤은 출처/규격마다 다르니 제작 전 검증이 필요합니다.
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="viewer-row">
+      <div class="panel">
+        <h3>
+          전체 미리보기
+          <span class="legend">
+            <span><i style="background:var(--cs-stroke)"></i>디스크</span>
+            <span><i style="background:var(--fs-stroke)"></i>핀 링</span>
+          </span>
+        </h3>
+        <svg id="cy-svg-main" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="panel">
+        <h3>로브 확대</h3>
+        <svg id="cy-svg-detail" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+  </main>
+</div>
+</section>
+
+<script src="core-math.js"></script>
+<script src="dxf-writer.js"></script>
+<script src="app.js"></script>
+<script src="cycloidal-math.js"></script>
+<script src="cycloidal-app.js"></script>
+<script src="tabs.js"></script>
+</body>
+</html>

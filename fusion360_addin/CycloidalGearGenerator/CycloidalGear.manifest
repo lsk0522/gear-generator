@@ -1,0 +1,14 @@
+{
+    "autodeskProduct": "Fusion360",
+    "type": "addin",
+    "id": "a1b2c3d4-e5f6-47a8-9b0c-cycloidalgear01",
+    "author": "",
+    "description": {
+        "": "파라메트릭 사이클로이드 감속기(디스크/축/핀링/하우징)를 생성합니다.",
+        "ko-KR": "파라메트릭 사이클로이드 감속기(디스크/축/핀링/하우징)를 생성합니다."
+    },
+    "version": "1.7.0",
+    "runOnStartup": false,
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}

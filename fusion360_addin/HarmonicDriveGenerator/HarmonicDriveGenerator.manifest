@@ -1,0 +1,10 @@
+{
+    "autodeskProduct": "Fusion360",
+    "type": "addin",
+    "author": "",
+    "description": {
+        "": "모듈/외경/내경 입력만으로 사이클로이드 치형 하모닉 드라이브(서큘러스플라인 + 플렉스스플라인 + 웨이브제너레이터 캠)를 생성합니다."
+    },
+    "supportedOS": "windows|mac",
+    "editEnabled": true
+}
