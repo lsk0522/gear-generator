@@ -10,6 +10,7 @@
 <div class="tabbar">
   <button class="tab active" data-tab="hd">하모닉 드라이브</button>
   <button class="tab" data-tab="cyclo">사이클로이드 감속기</button>
+  <button class="tab" data-tab="uni">범용 기어</button>
 </div>
 
 <section class="tabpanel" id="panel-hd">
@@ -146,11 +147,15 @@
       <summary>고급 설정</summary>
       <div class="adv-grid">
         <div class="field">
-          <label>베어링 보어 지름</label>
+          <label><input id="cy-makebore" type="checkbox" checked /> 베어링 보어 생성</label>
           <input id="cy-bore" type="number" step="0.5" value="15" />
         </div>
         <div class="field">
-          <label>출력핀 개수</label>
+          <label>보어 공차 (반경)</label>
+          <input id="cy-tolbore" type="number" step="0.01" value="0.5" />
+        </div>
+        <div class="field">
+          <label><input id="cy-makeholes" type="checkbox" checked /> 출력핀 구멍 생성</label>
           <input id="cy-holecount" type="number" step="1" min="3" value="6" />
         </div>
         <div class="field">
@@ -162,8 +167,35 @@
           <input id="cy-holedia" type="number" step="0.1" value="6" />
         </div>
         <div class="field">
+          <label>출력 구멍 공차 (반경)</label>
+          <input id="cy-tolhole" type="number" step="0.01" value="1" />
+        </div>
+        <div class="field">
           <label>디스크-핀 공차</label>
           <input id="cy-toldisc" type="number" step="0.01" value="0.1" />
+        </div>
+        <div class="field">
+          <label>핀 공차 (반경)</label>
+          <input id="cy-tolpin" type="number" step="0.01" value="0" />
+        </div>
+        <div class="field">
+          <label><input id="cy-makering" type="checkbox" checked /> 핀 링 생성</label>
+          <input id="cy-pinmargin" type="number" step="0.1" value="2" />
+        </div>
+        <div class="field">
+          <label><input id="cy-twin" type="checkbox" /> 2단 디스크 (180° 위상)</label>
+          <input id="cy-gap" type="number" step="0.1" value="1" />
+        </div>
+        <div class="field">
+          <label><input id="cy-makeshaft" type="checkbox" checked /> 편심 축 생성</label>
+        </div>
+        <div class="field">
+          <label>중앙 축 지름</label>
+          <input id="cy-shaftdia" type="number" step="0.5" value="11" />
+        </div>
+        <div class="field">
+          <label>편심 저널 지름</label>
+          <input id="cy-journaldia" type="number" step="0.5" value="14" />
         </div>
         <div class="field">
           <label>외곽선 해상도</label>
@@ -181,6 +213,7 @@
     <div class="downloads">
       <button id="cy-dl-disc" class="dl"><span class="swatch" style="background:var(--cs-stroke)"></span>디스크 DXF</button>
       <button id="cy-dl-ring" class="dl"><span class="swatch" style="background:var(--fs-stroke)"></span>핀 링 DXF</button>
+      <button id="cy-dl-shaft" class="dl"><span class="swatch" style="background:var(--wg-stroke)"></span>편심 축 DXF</button>
       <button id="cy-dl-all" class="dl"><span class="swatch" style="background:#fff"></span>전체 DXF (레이어 포함)</button>
     </div>
 
@@ -198,8 +231,10 @@
         <h3>
           전체 미리보기
           <span class="legend">
-            <span><i style="background:var(--cs-stroke)"></i>디스크</span>
+            <span><i style="background:var(--cs-stroke)"></i>디스크1</span>
+            <span><i style="background:var(--accent2)"></i>디스크2(2단)</span>
             <span><i style="background:var(--fs-stroke)"></i>핀 링</span>
+            <span><i style="background:var(--wg-stroke)"></i>편심 축</span>
           </span>
         </h3>
         <svg id="cy-svg-main" xmlns="http://www.w3.org/2000/svg"></svg>
@@ -213,11 +248,140 @@
 </div>
 </section>
 
+<section class="tabpanel" id="panel-uni" hidden>
+<div class="app">
+  <aside class="sidebar">
+    <h1>범용 기어 생성기<span class="pill">Universal v2</span></h1>
+    <p class="subtitle">
+      기어 종류·감속비·모듈만 입력하면 바로 생성됩니다. 정밀 인벌류트 치형
+      대신 안정적으로 생성되는 단순 치형 근사를 사용합니다 (
+      <code>fusion360_addin/UniversalGearGenerator</code> 애드인의 스케치
+      단계와 동일한 수식). 애드인은 이 2D 외곽선을 돌출/로프트/스윕해서
+      3D 솔리드를 만들지만, 웹 미리보기는 항상 2D 외곽선까지만 보여줍니다.
+    </p>
+
+    <div class="field">
+      <label>기어 종류</label>
+      <select id="un-type">
+        <option value="0">평기어 세트 (Spur Pair)</option>
+        <option value="1">헬리컬 기어 세트 (Helical Pair)</option>
+        <option value="2">내치 기어 세트 (Internal Gear Set)</option>
+        <option value="3">베벨 기어 세트 (Bevel Pair)</option>
+        <option value="4">웜 기어 세트 (Worm + Wheel)</option>
+        <option value="5">랙 피니언 세트 (Rack + Pinion)</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>감속비</label>
+      <input id="un-ratio" type="number" step="0.1" min="1" value="3" />
+    </div>
+    <div class="field">
+      <label>모듈 <span class="unit">mm</span></label>
+      <input id="un-module" type="number" step="0.1" min="0.1" value="2" />
+    </div>
+    <div class="field">
+      <label><input id="un-advanced" type="checkbox" /> 고급 옵션 켜기</label>
+    </div>
+
+    <details class="advanced" id="un-adv-details">
+      <summary>고급 설정 (고급 옵션 켤 때만 적용)</summary>
+      <div class="adv-grid">
+        <div class="field" id="un-f-pinionTeeth">
+          <label>피니언 잇수</label>
+          <input id="un-pinionTeeth" type="number" step="1" min="6" value="20" />
+        </div>
+        <div class="field" id="un-f-gearTeeth">
+          <label>큰 기어/링/랙 잇수 (0=자동)</label>
+          <input id="un-gearTeeth" type="number" step="1" min="0" value="0" />
+        </div>
+        <div class="field" id="un-f-pressureAngle">
+          <label>압력각 <span class="unit">deg</span></label>
+          <input id="un-pressureAngle" type="number" step="0.5" value="20" />
+        </div>
+        <div class="field" id="un-f-face">
+          <label>두께/폭 <span class="unit">mm</span></label>
+          <input id="un-face" type="number" step="0.5" value="16" />
+        </div>
+        <div class="field" id="un-f-hole">
+          <label>중앙 구멍 지름 <span class="unit">mm</span></label>
+          <input id="un-hole" type="number" step="0.5" value="5" />
+        </div>
+        <div class="field" id="un-f-helixAngle">
+          <label>헬릭스 각도 <span class="unit">deg</span></label>
+          <input id="un-helixAngle" type="number" step="0.5" value="20" />
+        </div>
+        <div class="field" id="un-f-hand">
+          <label>방향</label>
+          <select id="un-hand">
+            <option value="우선 / Right Hand">우선 / Right Hand</option>
+            <option value="좌선 / Left Hand">좌선 / Left Hand</option>
+          </select>
+        </div>
+        <div class="field" id="un-f-coneAngle">
+          <label>베벨 원추각 <span class="unit">deg</span></label>
+          <input id="un-coneAngle" type="number" step="0.5" value="45" />
+        </div>
+        <div class="field" id="un-f-wormStarts">
+          <label>웜 줄 수</label>
+          <input id="un-wormStarts" type="number" step="1" min="1" value="1" />
+        </div>
+        <div class="field" id="un-f-wormPitchDia">
+          <label>웜 피치 지름 <span class="unit">mm</span></label>
+          <input id="un-wormPitchDia" type="number" step="0.5" value="16" />
+        </div>
+      </div>
+    </details>
+
+    <div class="results">
+      <h2>계산 결과</h2>
+      <div id="un-warnings"></div>
+      <div id="un-result-grid" class="result-grid"></div>
+    </div>
+
+    <div class="downloads" id="un-downloads">
+      <button id="un-dl-1" class="dl"><span class="swatch" style="background:var(--g1-stroke)"></span>부품 1 DXF</button>
+      <button id="un-dl-2" class="dl"><span class="swatch" style="background:var(--g2-stroke)"></span>부품 2 DXF</button>
+      <button id="un-dl-all" class="dl"><span class="swatch" style="background:#fff"></span>전체 DXF (레이어 포함)</button>
+    </div>
+
+    <div class="footer-note">
+      단순 치형 근사(4점/이: 이뿌리·상승 플랭크·이끝·하강 플랭크)로, 실제
+      인벌류트 치형이 아닙니다 — 애드인 원본과 동일한 단순화입니다.
+      헬리컬/베벨/웜은 3D에서는 비틀림/테이퍼/나선 스윕이 들어가지만, 2D
+      웹 미리보기는 애드인의 바닥 스케치(비틀림 전 단면)를 그대로 보여줍니다.
+      생성된 형상은 개념 검증용이며, 실제 제작 전 강도/치형/공차 검증이
+      필요합니다. Fusion 360 애드인: <code>fusion360_addin/UniversalGearGenerator</code>.
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="viewer-row">
+      <div class="panel">
+        <h3>
+          전체 미리보기
+          <span class="legend">
+            <span><i style="background:var(--g1-stroke)"></i>부품 1</span>
+            <span><i style="background:var(--g2-stroke)"></i>부품 2</span>
+          </span>
+        </h3>
+        <svg id="un-svg-main" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="panel">
+        <h3>치형 확대</h3>
+        <svg id="un-svg-detail" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+    </div>
+  </main>
+</div>
+</section>
+
 <script src="core-math.js"></script>
 <script src="dxf-writer.js"></script>
 <script src="app.js"></script>
 <script src="cycloidal-math.js"></script>
 <script src="cycloidal-app.js"></script>
+<script src="universal-math.js"></script>
+<script src="universal-app.js"></script>
 <script src="tabs.js"></script>
 </body>
 </html>

@@ -18,11 +18,26 @@
   `fusion360_addin/HarmonicDriveGenerator/hd_math.py` 참고.
 - **사이클로이드 감속기** — 감속비 / 핀 피치원 반지름 / 핀 반지름 / 편심량을
   입력하면 디스크 외곽선(포락선 방식)과 핀 배치를 실시간으로 계산합니다.
-  수식은 `web/cycloidal-math.js`에 있으며,
-  `fusion360_addin/CycloidalGearGenerator`와 동일한 식을 사용합니다.
+  고급 설정에서 2단 디스크(twin, 180° 위상), 편심 축(중앙 축 + 저널),
+  베어링 보어/출력핀 구멍 생성 여부, 각 부위별 공차까지
+  `CycloidalGearGenerator` 애드인과 동일하게 조정할 수 있습니다. 수식은
+  `web/cycloidal-math.js`에 있으며, `fusion360_addin/CycloidalGearGenerator`와
+  동일한 식을 사용합니다.
+- **범용 기어** — 기어 종류(평기어/헬리컬/내치/베벨/웜/랙 피니언)와 감속비,
+  모듈만 입력하면 바로 생성됩니다. `UniversalGearGenerator` 애드인이
+  3D 솔리드를 만들기 전에 그리는 2D 스케치(단순 치형 근사, 4점/이)와 동일한
+  수식을 사용하며, 웹은 그 2D 단계까지만 보여줍니다. 수식은
+  `web/universal-math.js`에 있습니다.
 
-두 탭 모두 계산된 파라미터(감속비, 잇수/핀수, 각종 반경 등)를 사이드바에
+세 탭 모두 계산된 파라미터(감속비, 잇수/핀수, 각종 반경 등)를 사이드바에
 표시하고, 형상이 성립하지 않는 조합은 경고/오류로 알려줍니다.
+
+### 로컬 실행
+
+`web/` 디렉터리 루트에서 `run.bat`을 더블클릭하면 로컬 서버를 띄우고
+기본 브라우저로 자동으로 엽니다 (Python 3 필요). GitHub Pages 배포는
+`.github/workflows/deploy.yml`이 `master` 브랜치 푸시 시 `web/`를 자동
+배포합니다 (저장소 Settings → Pages → Source를 "GitHub Actions"로 설정).
 
 ## Fusion 360 애드인 (`fusion360_addin/`)
 

@@ -10,10 +10,22 @@
     E: $("#cy-E"),
     thickness: $("#cy-thickness"),
     bore: $("#cy-bore"),
+    makeBore: $("#cy-makebore"),
+    tolBore: $("#cy-tolbore"),
     holeCount: $("#cy-holecount"),
+    makeHoles: $("#cy-makeholes"),
     holePcd: $("#cy-holepcd"),
     holeDia: $("#cy-holedia"),
+    tolHole: $("#cy-tolhole"),
     tolDisc: $("#cy-toldisc"),
+    tolPin: $("#cy-tolpin"),
+    makeRing: $("#cy-makering"),
+    pinMargin: $("#cy-pinmargin"),
+    twin: $("#cy-twin"),
+    gap: $("#cy-gap"),
+    makeShaft: $("#cy-makeshaft"),
+    shaftDia: $("#cy-shaftdia"),
+    journalDia: $("#cy-journaldia"),
     points: $("#cy-points"),
     resultGrid: $("#cy-result-grid"),
     warnings: $("#cy-warnings"),
@@ -21,6 +33,7 @@
     svgDetail: $("#cy-svg-detail"),
     dlDisc: $("#cy-dl-disc"),
     dlRing: $("#cy-dl-ring"),
+    dlShaft: $("#cy-dl-shaft"),
     dlAll: $("#cy-dl-all"),
   };
 
@@ -39,10 +52,22 @@
       ecc: num(els.E, 1.5),
       thickness: num(els.thickness, 5),
       boreDia: num(els.bore, 15),
+      makeBore: els.makeBore.checked,
+      tolBore: num(els.tolBore, 0.05),
       holeCount: Math.round(num(els.holeCount, 6)),
+      makeHoles: els.makeHoles.checked,
       holePcdR: num(els.holePcd, 18),
       holePinDia: num(els.holeDia, 6),
+      tolHole: num(els.tolHole, 0.1),
       tolDisc: num(els.tolDisc, 0.1),
+      tolPin: num(els.tolPin, 0),
+      makeRing: els.makeRing.checked,
+      pinLenMargin: num(els.pinMargin, 2),
+      twin: els.twin.checked,
+      gap: num(els.gap, 1),
+      makeShaft: els.makeShaft.checked,
+      shaftDia: num(els.shaftDia, 11),
+      journalDia: num(els.journalDia, 14),
       points: Math.round(num(els.points, 360)),
     };
   }
@@ -99,6 +124,8 @@
       ["편심량 (E)", fmt(p.E) + " mm", false],
       ["핀 간 피치(호 길이)", fmt(p.pinPitch) + " mm", false],
       ["디스크 최대 반경", fmt(p.R + p.Rr) + " mm 근방", false],
+      ["2단 디스크(twin)", p.twin ? "예 (180° 위상, 간격 " + fmt(p.gap) + " mm)" : "아니오", false],
+      ["편심 축", p.makeShaft ? `축 ⌀${fmt(p.shaftDia)} / 저널 ⌀${fmt(p.journalDia)} mm` : "생성 안 함", false],
     ];
     els.resultGrid.innerHTML = rows
       .map(
@@ -131,13 +158,25 @@
     discPath.style.strokeWidth = "1.2";
     g.appendChild(discPath);
 
-    if (showBore) {
+    if (p.twin) {
+      const disc2 = CycloMath.discOutline(p, true);
+      const disc2Path = svgEl("path", { d: loopToPathD(disc2, scale), fill: "none" });
+      disc2Path.style.stroke = "var(--accent2)";
+      disc2Path.style.strokeWidth = "1.2";
+      disc2Path.style.strokeDasharray = "5 3";
+      disc2Path.style.opacity = "0.85";
+      g.appendChild(disc2Path);
+    }
+
+    if (showBore && p.makeBore) {
       const bore = svgEl("path", { d: circlePathD(p.boreDia / 2, 0, 0, scale), fill: "none" });
       bore.style.stroke = "#ffffff55";
       bore.style.strokeWidth = "1";
       bore.style.strokeDasharray = "3 3";
       g.appendChild(bore);
+    }
 
+    if (showBore && p.makeHoles) {
       for (const h of CycloMath.outputHoleCenters(p)) {
         const c = svgEl("path", { d: circlePathD(h.r, h.x, h.y, scale), fill: "none" });
         c.style.stroke = "#ffffff55";
@@ -146,13 +185,30 @@
       }
     }
 
-    for (const pin of CycloMath.pinCenters(p)) {
-      const c = svgEl("path", { d: circlePathD(pin.r, pin.x, pin.y, scale) });
-      c.style.fill = "var(--fs-fill)";
-      c.style.stroke = "var(--fs-stroke)";
-      c.style.strokeWidth = "1";
-      c.style.opacity = "0.9";
-      g.appendChild(c);
+    if (showBore && p.makeShaft) {
+      const sg = CycloMath.shaftGeometry(p);
+      const shaft = svgEl("path", { d: circlePathD(sg.shaftR, 0, 0, scale), fill: "none" });
+      shaft.style.stroke = "var(--wg-stroke)";
+      shaft.style.strokeWidth = "1.4";
+      g.appendChild(shaft);
+      for (const j of sg.journals) {
+        const jc = svgEl("path", { d: circlePathD(sg.journalR, j.x, j.y, scale), fill: "none" });
+        jc.style.stroke = "var(--wg-stroke)";
+        jc.style.strokeWidth = "1.4";
+        jc.style.strokeDasharray = j.phase180 ? "3 2" : "";
+        g.appendChild(jc);
+      }
+    }
+
+    if (p.makeRing) {
+      for (const pin of CycloMath.pinCenters(p)) {
+        const c = svgEl("path", { d: circlePathD(pin.r, pin.x, pin.y, scale) });
+        c.style.fill = "var(--fs-fill)";
+        c.style.stroke = "var(--fs-stroke)";
+        c.style.strokeWidth = "1";
+        c.style.opacity = "0.9";
+        g.appendChild(c);
+      }
     }
 
     return g;
@@ -217,33 +273,56 @@
 
   function wireDownloads(p) {
     els.dlDisc.onclick = () => {
-      const disc = CycloMath.discOutline(p, false);
-      const dxf = DXFWriter.buildDXF([
-        { layer: "DISC", loops: [disc.map((pt) => ({ x: pt.x, y: pt.y }))] },
-        { layer: "BORE", loops: [CycloMath.circlePoints(p.boreDia / 2, 0, 0, 180)] },
-      ]);
-      download("cycloidal_disc.dxf", dxf);
+      const layers = [{ layer: "DISC", loops: [CycloMath.discOutline(p, false)] }];
+      if (p.makeBore) layers.push({ layer: "BORE", loops: [CycloMath.circlePoints(p.boreDia / 2, 0, 0, 180)] });
+      if (p.makeHoles)
+        layers.push({
+          layer: "OUTPUT_HOLES",
+          loops: CycloMath.outputHoleCenters(p).map((c) => CycloMath.circlePoints(c.r, c.x, c.y, 60)),
+        });
+      if (p.twin) layers.push({ layer: "DISC2", loops: [CycloMath.discOutline(p, true)] });
+      download("cycloidal_disc.dxf", DXFWriter.buildDXF(layers));
     };
 
     els.dlRing.onclick = () => {
+      if (!p.makeRing) return;
       const loops = CycloMath.pinCenters(p).map((c) => CycloMath.circlePoints(c.r, c.x, c.y, 90));
       const dxf = DXFWriter.buildDXF([{ layer: "PINS", loops }]);
       download("pin_ring.dxf", dxf);
     };
 
+    els.dlShaft.onclick = () => {
+      if (!p.makeShaft) return;
+      const sg = CycloMath.shaftGeometry(p);
+      const layers = [{ layer: "SHAFT", loops: [CycloMath.circlePoints(sg.shaftR, 0, 0, 120)] }];
+      sg.journals.forEach((j, i) => {
+        layers.push({ layer: "JOURNAL_" + (i + 1), loops: [CycloMath.circlePoints(sg.journalR, j.x, j.y, 90)] });
+      });
+      download("eccentric_shaft.dxf", DXFWriter.buildDXF(layers));
+    };
+
     els.dlAll.onclick = () => {
-      const disc = CycloMath.discOutline(p, false);
-      const pinLoops = CycloMath.pinCenters(p).map((c) => CycloMath.circlePoints(c.r, c.x, c.y, 90));
-      const holeLoops = CycloMath.outputHoleCenters(p).map((c) =>
-        CycloMath.circlePoints(c.r, c.x, c.y, 60)
-      );
-      const dxf = DXFWriter.buildDXF([
-        { layer: "DISC", loops: [disc] },
-        { layer: "BORE", loops: [CycloMath.circlePoints(p.boreDia / 2, 0, 0, 180)] },
-        { layer: "OUTPUT_HOLES", loops: holeLoops },
-        { layer: "PINS", loops: pinLoops },
-      ]);
-      download("cycloidal_drive_full.dxf", dxf);
+      const layers = [{ layer: "DISC", loops: [CycloMath.discOutline(p, false)] }];
+      if (p.twin) layers.push({ layer: "DISC2", loops: [CycloMath.discOutline(p, true)] });
+      if (p.makeBore) layers.push({ layer: "BORE", loops: [CycloMath.circlePoints(p.boreDia / 2, 0, 0, 180)] });
+      if (p.makeHoles)
+        layers.push({
+          layer: "OUTPUT_HOLES",
+          loops: CycloMath.outputHoleCenters(p).map((c) => CycloMath.circlePoints(c.r, c.x, c.y, 60)),
+        });
+      if (p.makeShaft) {
+        const sg = CycloMath.shaftGeometry(p);
+        layers.push({ layer: "SHAFT", loops: [CycloMath.circlePoints(sg.shaftR, 0, 0, 120)] });
+        sg.journals.forEach((j, i) => {
+          layers.push({ layer: "JOURNAL_" + (i + 1), loops: [CycloMath.circlePoints(sg.journalR, j.x, j.y, 90)] });
+        });
+      }
+      if (p.makeRing)
+        layers.push({
+          layer: "PINS",
+          loops: CycloMath.pinCenters(p).map((c) => CycloMath.circlePoints(c.r, c.x, c.y, 90)),
+        });
+      download("cycloidal_drive_full.dxf", DXFWriter.buildDXF(layers));
     };
   }
 
@@ -260,10 +339,22 @@
     els.E,
     els.thickness,
     els.bore,
+    els.makeBore,
+    els.tolBore,
     els.holeCount,
+    els.makeHoles,
     els.holePcd,
     els.holeDia,
+    els.tolHole,
     els.tolDisc,
+    els.tolPin,
+    els.makeRing,
+    els.pinMargin,
+    els.twin,
+    els.gap,
+    els.makeShaft,
+    els.shaftDia,
+    els.journalDia,
     els.points,
   ].forEach((el) => el && el.addEventListener("input", scheduleRender));
 

@@ -15,6 +15,10 @@
   --fs-fill: #6a3d20;
   --fs-stroke: #ffb057;
   --wg-stroke: #6fe38a;
+  --g1-fill: #274a63;
+  --g1-stroke: #6fc3ff;
+  --g2-fill: #6a3d20;
+  --g2-stroke: #ffb057;
 }
 
 * { box-sizing: border-box; }

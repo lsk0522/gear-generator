@@ -54,6 +54,9 @@
     tolHole: 0.1,
     tolPin: 0.0,
     pinLenMargin: 2,
+    shaftDia: 11,
+    journalDia: 14,
+    gap: 1,
   };
 
   function deriveParams(input) {
@@ -73,6 +76,14 @@
     const tolHole = input.tolHole ?? DEFAULTS.tolHole;
     const tolPin = input.tolPin ?? DEFAULTS.tolPin;
     const pinLenMargin = input.pinLenMargin ?? DEFAULTS.pinLenMargin;
+    const makeBore = input.makeBore ?? true;
+    const makeHoles = input.makeHoles ?? true;
+    const twin = input.twin ?? false;
+    const makeShaft = input.makeShaft ?? true;
+    const makeRing = input.makeRing ?? true;
+    const shaftDia = input.shaftDia ?? DEFAULTS.shaftDia;
+    const journalDia = input.journalDia ?? DEFAULTS.journalDia;
+    const gap = input.gap ?? DEFAULTS.gap;
 
     const warnings = [];
     if (E <= 0) warnings.push("편심량(E)이 0보다 커야 합니다.");
@@ -106,10 +117,29 @@
       tolHole,
       tolPin,
       pinLenMargin,
+      makeBore,
+      makeHoles,
+      twin,
+      makeShaft,
+      makeRing,
+      shaftDia,
+      journalDia,
+      gap,
       pinPitch,
       warnings,
       feasible: E > 0 && Rr > 0 && 2 * (Rr + tolPin) < pinPitch,
     };
+  }
+
+  // Mirrors CycloidalGear.py build_shaft(): shaft centered at origin, one
+  // eccentric journal per disc (offset +E for disc 1, -E — i.e. phase180 —
+  // for disc 2 of a twin stack).
+  function shaftGeometry(p) {
+    const shaftR = p.shaftDia / 2;
+    const journalR = p.journalDia / 2;
+    const journals = [{ x: p.E, y: 0, phase180: false }];
+    if (p.twin) journals.push({ x: -p.E, y: 0, phase180: true });
+    return { shaftR, journalR, journals };
   }
 
   function discOutline(p, phase180) {
@@ -154,6 +184,7 @@
     discOutline,
     pinCenters,
     outputHoleCenters,
+    shaftGeometry,
     circlePoints,
   };
 
