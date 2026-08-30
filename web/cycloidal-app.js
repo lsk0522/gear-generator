@@ -29,6 +29,9 @@
     points: $("#cy-points"),
     resultGrid: $("#cy-result-grid"),
     warnings: $("#cy-warnings"),
+    drive: $("#cy-drive"),
+    driveVal: $("#cy-drive-val"),
+    play: $("#cy-play"),
     svgMain: $("#cy-svg-main"),
     svgDetail: $("#cy-svg-detail"),
     dlDisc: $("#cy-dl-disc"),
@@ -103,9 +106,40 @@
     while (svg.firstChild) svg.removeChild(svg.firstChild);
   }
 
+  // Rigid-body pose of the disc at eccentric (input) angle theta:
+  // its centre orbits on radius E, and it counter-rotates 1/(N-1) as fast.
+  // phase180 shifts the orbit by 180° (the second disc of a twin stack).
+  function discPose(p, theta, phase180) {
+    const t = phase180 ? theta + Math.PI : theta;
+    return { cx: p.E * Math.cos(t), cy: p.E * Math.sin(t), phi: -theta / (p.N - 1) };
+  }
+
+  function xf(pt, pose) {
+    const c = Math.cos(pose.phi),
+      s = Math.sin(pose.phi);
+    return { x: pose.cx + pt.x * c - pt.y * s, y: pose.cy + pt.x * s + pt.y * c };
+  }
+
+  function xfLoop(loop, pose) {
+    return loop.map((pt) => xf(pt, pose));
+  }
+
+  let currentP = null;
+
+  function driveRad() {
+    return (num(els.drive, 0) * Math.PI) / 180;
+  }
+
+  function redrawGeometry() {
+    if (!currentP) return;
+    renderMainSvg(currentP);
+    renderDetailSvg(currentP);
+  }
+
   function render() {
     const input = readInputs();
     const p = CycloMath.deriveParams(input);
+    currentP = p;
 
     renderResults(p);
     renderWarnings(p);
@@ -145,61 +179,20 @@
     }
   }
 
-  function buildSceneSvg(svg, p, W, H, scale, showBore) {
+  function circleLoop(r, cx, cy, nSeg) {
+    return CycloMath.circlePoints(r, cx, cy, nSeg || 90);
+  }
+
+  function buildSceneSvg(svg, p, W, H, scale, showBore, drive) {
     clear(svg);
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
     svg.appendChild(g);
 
-    const disc = CycloMath.discOutline(p, false);
-    const discPath = svgEl("path", { d: loopToPathD(disc, scale) });
-    discPath.style.fill = "var(--cs-fill)";
-    discPath.style.stroke = "var(--cs-stroke)";
-    discPath.style.strokeWidth = "1.2";
-    g.appendChild(discPath);
+    const theta = drive || 0;
+    const pose = discPose(p, theta, false);
 
-    if (p.twin) {
-      const disc2 = CycloMath.discOutline(p, true);
-      const disc2Path = svgEl("path", { d: loopToPathD(disc2, scale), fill: "none" });
-      disc2Path.style.stroke = "var(--accent2)";
-      disc2Path.style.strokeWidth = "1.2";
-      disc2Path.style.strokeDasharray = "5 3";
-      disc2Path.style.opacity = "0.85";
-      g.appendChild(disc2Path);
-    }
-
-    if (showBore && p.makeBore) {
-      const bore = svgEl("path", { d: circlePathD(p.boreDia / 2, 0, 0, scale), fill: "none" });
-      bore.style.stroke = "#ffffff55";
-      bore.style.strokeWidth = "1";
-      bore.style.strokeDasharray = "3 3";
-      g.appendChild(bore);
-    }
-
-    if (showBore && p.makeHoles) {
-      for (const h of CycloMath.outputHoleCenters(p)) {
-        const c = svgEl("path", { d: circlePathD(h.r, h.x, h.y, scale), fill: "none" });
-        c.style.stroke = "#ffffff55";
-        c.style.strokeWidth = "1";
-        g.appendChild(c);
-      }
-    }
-
-    if (showBore && p.makeShaft) {
-      const sg = CycloMath.shaftGeometry(p);
-      const shaft = svgEl("path", { d: circlePathD(sg.shaftR, 0, 0, scale), fill: "none" });
-      shaft.style.stroke = "var(--wg-stroke)";
-      shaft.style.strokeWidth = "1.4";
-      g.appendChild(shaft);
-      for (const j of sg.journals) {
-        const jc = svgEl("path", { d: circlePathD(sg.journalR, j.x, j.y, scale), fill: "none" });
-        jc.style.stroke = "var(--wg-stroke)";
-        jc.style.strokeWidth = "1.4";
-        jc.style.strokeDasharray = j.phase180 ? "3 2" : "";
-        g.appendChild(jc);
-      }
-    }
-
+    // fixed ring pins (housing) — drawn first, behind the disc
     if (p.makeRing) {
       for (const pin of CycloMath.pinCenters(p)) {
         const c = svgEl("path", { d: circlePathD(pin.r, pin.x, pin.y, scale) });
@@ -211,6 +204,66 @@
       }
     }
 
+    // disc 1 (posed)
+    const disc = xfLoop(CycloMath.discOutline(p, false), pose);
+    const discPath = svgEl("path", { d: loopToPathD(disc, scale) });
+    discPath.style.fill = "var(--cs-fill)";
+    discPath.style.stroke = "var(--cs-stroke)";
+    discPath.style.strokeWidth = "1.2";
+    discPath.style.opacity = "0.92";
+    g.appendChild(discPath);
+
+    if (p.twin) {
+      const pose2 = discPose(p, theta, true);
+      const disc2 = xfLoop(CycloMath.discOutline(p, true), pose2);
+      const disc2Path = svgEl("path", { d: loopToPathD(disc2, scale), fill: "none" });
+      disc2Path.style.stroke = "var(--accent2)";
+      disc2Path.style.strokeWidth = "1.2";
+      disc2Path.style.strokeDasharray = "5 3";
+      disc2Path.style.opacity = "0.85";
+      g.appendChild(disc2Path);
+    }
+
+    if (showBore && p.makeBore) {
+      const bore = xfLoop(circleLoop(p.boreDia / 2, 0, 0, 120), pose);
+      const b = svgEl("path", { d: loopToPathD(bore, scale), fill: "none" });
+      b.style.stroke = "#ffffff55";
+      b.style.strokeWidth = "1";
+      b.style.strokeDasharray = "3 3";
+      g.appendChild(b);
+    }
+
+    if (showBore && p.makeHoles) {
+      for (const h of CycloMath.outputHoleCenters(p)) {
+        const loop = xfLoop(circleLoop(h.r, h.x, h.y, 60), pose);
+        const c = svgEl("path", { d: loopToPathD(loop, scale), fill: "none" });
+        c.style.stroke = "#ffffff55";
+        c.style.strokeWidth = "1";
+        g.appendChild(c);
+      }
+    }
+
+    if (showBore && p.makeShaft) {
+      const sg = CycloMath.shaftGeometry(p);
+      // main shaft stays on the fixed axis; the journal sits at the disc centre
+      const shaft = svgEl("path", { d: circlePathD(sg.shaftR, 0, 0, scale), fill: "none" });
+      shaft.style.stroke = "var(--wg-stroke)";
+      shaft.style.strokeWidth = "1.4";
+      g.appendChild(shaft);
+      const j1 = svgEl("path", { d: circlePathD(sg.journalR, pose.cx, pose.cy, scale), fill: "none" });
+      j1.style.stroke = "var(--wg-stroke)";
+      j1.style.strokeWidth = "1.4";
+      g.appendChild(j1);
+      if (p.twin) {
+        const pose2 = discPose(p, theta, true);
+        const j2 = svgEl("path", { d: circlePathD(sg.journalR, pose2.cx, pose2.cy, scale), fill: "none" });
+        j2.style.stroke = "var(--wg-stroke)";
+        j2.style.strokeWidth = "1.4";
+        j2.style.strokeDasharray = "3 2";
+        g.appendChild(j2);
+      }
+    }
+
     return g;
   }
 
@@ -219,36 +272,24 @@
       H = 900;
     const extent = p.R + p.Rr + 4;
     const scale = (W * 0.46) / extent;
-    buildSceneSvg(els.svgMain, p, W, H, scale, true);
+    buildSceneSvg(els.svgMain, p, W, H, scale, true, driveRad());
   }
 
   function renderDetailSvg(p) {
     const W = 500,
       H = 500;
-    // zoom on one lobe near the top
+    const theta = driveRad();
+    // zoom on the contact zone near the top pin (angle +90°, i.e. +y)
     const scale = (W * 0.42) / (2 * (p.Rr + Math.abs(p.E) + 1));
     clear(els.svgDetail);
     els.svgDetail.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const disc = CycloMath.discOutline(p, false);
-    // find the point nearest angle 0 (top lobe) to center the view on it
-    let best = disc[0],
-      bestD = Infinity;
-    for (const pt of disc) {
-      const d = Math.abs(Math.atan2(pt.x, pt.y));
-      if (d < bestD) {
-        bestD = d;
-        best = pt;
-      }
-    }
+    const focus = { x: 0, y: p.R }; // the top fixed pin — where a lobe engages
     const g = svgEl("g", {
-      transform: `translate(${W / 2 - best.x * scale},${H / 2 + best.y * scale})`,
+      transform: `translate(${W / 2 - focus.x * scale},${H / 2 + focus.y * scale})`,
     });
     els.svgDetail.appendChild(g);
-    const discPath = svgEl("path", { d: loopToPathD(disc, scale) });
-    discPath.style.fill = "var(--cs-fill)";
-    discPath.style.stroke = "var(--cs-stroke)";
-    discPath.style.strokeWidth = "1.5";
-    g.appendChild(discPath);
+
+    // fixed pins near the top
     for (const pin of CycloMath.pinCenters(p)) {
       const c = svgEl("path", { d: circlePathD(pin.r, pin.x, pin.y, scale) });
       c.style.fill = "var(--fs-fill)";
@@ -257,6 +298,15 @@
       c.style.opacity = "0.9";
       g.appendChild(c);
     }
+    // posed disc, showing the lobe/pin engagement
+    const pose = discPose(p, theta, false);
+    const disc = xfLoop(CycloMath.discOutline(p, false), pose);
+    const discPath = svgEl("path", { d: loopToPathD(disc, scale) });
+    discPath.style.fill = "var(--cs-fill)";
+    discPath.style.stroke = "var(--cs-stroke)";
+    discPath.style.strokeWidth = "1.5";
+    discPath.style.opacity = "0.92";
+    g.appendChild(discPath);
   }
 
   function download(filename, text) {
@@ -357,6 +407,45 @@
     els.journalDia,
     els.points,
   ].forEach((el) => el && el.addEventListener("input", scheduleRender));
+
+  els.drive.addEventListener("input", () => {
+    els.driveVal.textContent = els.drive.value + "°";
+    redrawGeometry();
+  });
+
+  // play / pause the eccentric-driven meshing animation
+  let playing = false;
+  let rafId = null;
+  let lastT = 0;
+  function tick(t) {
+    if (!playing) return;
+    if (!lastT) lastT = t;
+    const dt = (t - lastT) / 1000;
+    lastT = t;
+    let v = num(els.drive, 0) + dt * 60; // 60 deg/sec input
+    v = ((v % 360) + 360) % 360;
+    els.drive.value = v.toFixed(1);
+    els.driveVal.textContent = Math.round(v) + "°";
+    redrawGeometry();
+    rafId = requestAnimationFrame(tick);
+  }
+  els.play.addEventListener("click", () => {
+    playing = !playing;
+    els.play.textContent = playing ? "⏸ 정지" : "▶ 재생";
+    if (playing) {
+      lastT = 0;
+      rafId = requestAnimationFrame(tick);
+    } else if (rafId) {
+      cancelAnimationFrame(rafId);
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && playing) {
+      playing = false;
+      els.play.textContent = "▶ 재생";
+      if (rafId) cancelAnimationFrame(rafId);
+    }
+  });
 
   render();
 })();
