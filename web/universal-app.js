@@ -6,11 +6,20 @@
   const els = {
     type: $("#un-type"),
     ratio: $("#un-ratio"),
+    ratioR: $("#un-ratio-r"),
+    ratioVal: $("#un-ratio-val"),
     module: $("#un-module"),
+    moduleR: $("#un-module-r"),
+    moduleVal: $("#un-module-val"),
+    pa: $("#un-pa"),
+    paR: $("#un-pa-r"),
+    paVal: $("#un-pa-val"),
+    bl: $("#un-bl"),
+    blR: $("#un-bl-r"),
+    blVal: $("#un-bl-val"),
     advanced: $("#un-advanced"),
     pinionTeeth: $("#un-pinionTeeth"),
     gearTeeth: $("#un-gearTeeth"),
-    pressureAngle: $("#un-pressureAngle"),
     face: $("#un-face"),
     hole: $("#un-hole"),
     helixAngle: $("#un-helixAngle"),
@@ -34,6 +43,11 @@
 
   const ALPHA = (20 * Math.PI) / 180;
 
+  // involute options from the live pressure-angle / backlash inputs
+  function optOf(p) {
+    return { alpha: p.pressureAngle != null ? p.pressureAngle : ALPHA, backlash: p.backlash };
+  }
+
   function num(el, fallback) {
     const v = parseFloat(el.value);
     return isFinite(v) ? v : fallback;
@@ -47,7 +61,8 @@
       advanced: els.advanced.checked,
       pinionTeeth: Math.round(num(els.pinionTeeth, 20)),
       gearTeeth: Math.round(num(els.gearTeeth, 0)),
-      pressureAngleDeg: num(els.pressureAngle, 20),
+      pressureAngleDeg: num(els.pa, 20),
+      backlashFactor: num(els.bl, 0.05),
       face: num(els.face, 16),
       hole: num(els.hole, 5),
       helixAngleDeg: num(els.helixAngle, 20),
@@ -249,7 +264,7 @@
 
   // ---- bevel: Tredgold back-cone equivalent spur gears (true tooth form) ----
   function bevelTredgold(g, p, scale, drive) {
-    const opt = { alpha: ALPHA };
+    const opt = optOf(p);
     const m = p.module;
     const z1 = p.zv1r,
       z2 = p.zv2r;
@@ -265,7 +280,7 @@
 
   function buildScene(g, p, scale, drive, detail) {
     const pm = p.drawModule || p.module;
-    const opt = { alpha: ALPHA };
+    const opt = optOf(p);
 
     if (p.gearIdx === 0 || p.gearIdx === 1) {
       // external involute pair
@@ -386,7 +401,7 @@
     const rows = [
       ["기어 종류", p.gearTypeName, true],
       ["요약", p.summary, false],
-      ["치형", "인벌류트 (압력각 20°, 전깊이)", false],
+      ["치형", `인벌류트 (압력각 ${((p.pressureAngle * 180) / Math.PI).toFixed(1)}°, 백래시 ${(p.backlash / p.module).toFixed(2)}·m)`, false],
       ["모듈", fmt(p.module) + " mm", false],
       ["감속비 (입력)", p.ratio.toFixed(2) + " : 1", false],
     ];
@@ -467,7 +482,7 @@
 
   function part1Layers(p) {
     const pm = p.drawModule || p.module;
-    const opt = { alpha: ALPHA };
+    const opt = optOf(p);
     if (p.gearIdx === 0 || p.gearIdx === 1)
       return [{ layer: "PINION", loops: [Involute.involuteGear(p.z1, pm, 0, 0, 0, opt)] }];
     if (p.gearIdx === 2) {
@@ -493,7 +508,7 @@
 
   function part2Layers(p) {
     const pm = p.drawModule || p.module;
-    const opt = { alpha: ALPHA };
+    const opt = optOf(p);
     if (p.gearIdx === 0 || p.gearIdx === 1) {
       const phase2 = p.z2 % 2 === 0 ? -Math.PI / p.z2 : 0;
       return [{ layer: "GEAR", loops: [Involute.involuteGear(p.z2, pm, phase2, p.center, 0, opt)] }];
@@ -529,8 +544,16 @@
     renderDetailSvg(currentParams, d);
   }
 
+  function updateLabels() {
+    els.ratioVal.textContent = (+num(els.ratio, 3)).toFixed(1);
+    els.moduleVal.textContent = (+num(els.module, 2)).toFixed(1) + " mm";
+    els.paVal.textContent = (+num(els.pa, 20)).toFixed(1) + "°";
+    els.blVal.textContent = (+num(els.bl, 0.05)).toFixed(2) + " ×m";
+  }
+
   function render() {
     updateFieldVisibility();
+    updateLabels();
     const input = readInputs();
     const p = UniMath.deriveParams(input);
     currentParams = p;
@@ -546,14 +569,28 @@
     renderTimer = setTimeout(render, 60);
   }
 
+  // keep each number box and its slider in sync, then render
+  function pair(numEl, rangeEl) {
+    if (!numEl || !rangeEl) return;
+    numEl.addEventListener("input", () => {
+      rangeEl.value = numEl.value;
+      scheduleRender();
+    });
+    rangeEl.addEventListener("input", () => {
+      numEl.value = rangeEl.value;
+      scheduleRender();
+    });
+  }
+  pair(els.ratio, els.ratioR);
+  pair(els.module, els.moduleR);
+  pair(els.pa, els.paR);
+  pair(els.bl, els.blR);
+
   [
     els.type,
-    els.ratio,
-    els.module,
     els.advanced,
     els.pinionTeeth,
     els.gearTeeth,
-    els.pressureAngle,
     els.face,
     els.hole,
     els.helixAngle,

@@ -152,7 +152,6 @@
     if (!advanced) {
       pinionTeeth = 20;
       gearTeeth = 0;
-      pressureAngle = Math.PI / 9; // 20deg
       face = module * 8;
       hole = module * 2.5;
       helixAngle = Math.PI / 9;
@@ -161,6 +160,10 @@
       wormStarts = 1;
       wormPitchDia = module * 8;
     }
+
+    // pressure angle and backlash are always live (not advanced-gated)
+    pressureAngle = clamp(pressureAngle, (14 * Math.PI) / 180, (30 * Math.PI) / 180);
+    const backlash = clamp(input.backlashFactor ?? 0.05, 0, 0.4) * module;
 
     face = Math.max(face, module * 2);
     helixAngle = clamp(helixAngle, (1 * Math.PI) / 180, (40 * Math.PI) / 180);
@@ -176,6 +179,7 @@
       pinionTeeth,
       gearTeeth,
       pressureAngle,
+      backlash,
       face,
       hole,
       helixAngle,
