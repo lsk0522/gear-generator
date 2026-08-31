@@ -146,6 +146,36 @@
   const mainFit = ViewFit.make(),
     detailFit = ViewFit.make();
 
+  // Exaggerated wave-generator deflection for the *preview* only (the real
+  // radial deformation is ~1-2% of R and invisible at this scale). Capped so
+  // the flexspline teeth at the major axis mesh into the circular spline
+  // without poking past its outer rim. DXF export stays physically exact.
+  function defAmp(p) {
+    const want = Math.max(p.m * p.w0Star * 3, 0.05 * p.R1);
+    const cap = p.csOuterActual / 2 - p.Ra1 - 0.3 * p.m;
+    return Math.max(0.5, Math.min(want, cap));
+  }
+
+  // Warp a loop given in {x:r·sinθ, y:r·cosθ} form into an ellipse whose major
+  // axis points along `rot` (measured from +Y), radial amplitude `amp`.
+  function warpEllipse(loop, amp, rot) {
+    return loop.map((pt) => {
+      const th = Math.atan2(pt.x, pt.y);
+      const r = Math.hypot(pt.x, pt.y) + amp * Math.cos(2 * (th - rot));
+      return { x: r * Math.sin(th), y: r * Math.cos(th) };
+    });
+  }
+
+  function ellipseLoop(baseR, amp, rot, nSeg) {
+    const pts = [];
+    for (let i = 0; i <= nSeg; i++) {
+      const a = (2 * Math.PI * i) / nSeg;
+      const r = baseR + amp * Math.cos(2 * (a - rot));
+      pts.push({ x: r * Math.sin(a), y: r * Math.cos(a) });
+    }
+    return pts;
+  }
+
   function renderMainSvg(p) {
     const svg = els.svgMain;
     clear(svg);
@@ -157,8 +187,7 @@
     svg.appendChild(g);
 
     const rot = ((num(els.rotation, 0) || 0) * Math.PI) / 180;
-    // wave generator rotates the FS deformation pattern; here we simply spin
-    // the FS ring itself for an illustrative "meshing position" preview.
+    const amp = defAmp(p);
     const nSegDisplay = p.z2 > 140 ? 6 : p.z2 > 60 ? 10 : 16;
 
     // CS: outer circle + inner (addendum) circle + notches, evenodd
@@ -175,12 +204,38 @@
     csPath.style.strokeWidth = "1";
     g.appendChild(csPath);
 
-    // FS: hub circle (root) + bore circle + teeth, evenodd, rotated by `rot`
-    const fsHub = HDMath.circlePoints(p.Rf1, 220);
-    const fsBore = HDMath.circlePoints(p.bore, 220);
-    const fsTeeth = HDMath.buildFSRingTeethPoints(p, nSegDisplay, 0);
+    // Wave generator: an elliptical cam/bearing ring (drawn under the FS) with
+    // an input-shaft hub in the middle — not a solid disc.
+    const wgBase = Math.min(p.Rf1 - 0.6 * p.wallFS, p.bore - 0.3);
+    const wgOuter = ellipseLoop(wgBase, amp, rot, 160);
+    const wgInner = ellipseLoop(wgBase * 0.7, amp * 0.7, rot, 160);
+    const wgPath = svgEl("path", {
+      d: loopToPathD(wgOuter, scale, 0) + " " + loopToPathD(wgInner, scale, 0),
+      "fill-rule": "evenodd",
+    });
+    wgPath.style.fill = "var(--wg-fill)";
+    wgPath.style.opacity = "0.6";
+    wgPath.style.stroke = "var(--wg-stroke)";
+    wgPath.style.strokeWidth = "1.4";
+    g.appendChild(wgPath);
+    // input shaft hub at the centre
+    const wgHub = svgEl("path", { d: circlePathD(Math.max(p.bore * 0.18, 3), scale), fill: "none" });
+    wgHub.style.stroke = "var(--wg-stroke)";
+    wgHub.style.strokeWidth = "1.2";
+    g.appendChild(wgHub);
+
+    // FS: flexspline deformed into an ellipse by the wave generator — the
+    // toothed rim and hub warp elliptically, the output bore stays round. The
+    // teeth engage the circular spline at the two major-axis ends and clear it
+    // at the minor-axis ends; turning the WG slider sweeps the mesh around.
+    const fsHub = warpEllipse(HDMath.circlePoints(p.Rf1, 220), amp, rot);
+    // bore warps with the rim too (thin flexsplines would otherwise invert)
+    const fsBore = warpEllipse(HDMath.circlePoints(p.bore, 220), amp, rot);
+    const fsTeeth = HDMath.buildFSRingTeethPoints(p, nSegDisplay, 0).map((t) =>
+      warpEllipse(t, amp, rot)
+    );
     const fsPath = svgEl("path", {
-      d: buildRingPath([fsHub, fsBore, ...fsTeeth], scale, rot),
+      d: buildRingPath([fsHub, fsBore, ...fsTeeth], scale, 0),
       "fill-rule": "evenodd",
     });
     fsPath.style.fill = "var(--fs-fill)";
@@ -188,17 +243,6 @@
     fsPath.style.strokeWidth = "1";
     fsPath.style.opacity = "0.92";
     g.appendChild(fsPath);
-
-    // Wave generator cam outline
-    const wg = HDMath.buildWaveGeneratorCam(p, 240);
-    const wgPath = svgEl("path", {
-      d: loopToPathD(wg, scale, rot),
-      fill: "none",
-    });
-    wgPath.style.stroke = "var(--wg-stroke)";
-    wgPath.style.strokeWidth = "1.4";
-    wgPath.style.strokeDasharray = "4 3";
-    g.appendChild(wgPath);
 
     // reference pitch circles (dashed, thin)
     for (const r of [p.R1, p.R2]) {
@@ -216,19 +260,24 @@
     const W = 500,
       H = 500;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    // zoom on a handful of teeth near the top (angle 0) — steady across edits
-    const scale = ViewFit.fit(detailFit, W, 0.52, p.m, 0, 0).scale;
-    const g = svgEl("g", { transform: `translate(${W / 2},${H * 0.72})` });
+    const rot = ((num(els.rotation, 0) || 0) * Math.PI) / 180;
+    const amp = defAmp(p);
+
+    // Zoom on the mesh zone at the top (+Y). Centre a world point at radius
+    // focusR so the engaging teeth sit in the middle; ~9 modules wide window.
+    const focusR = (p.Rf2 + p.Ra1) / 2;
+    const scale = ViewFit.fit(detailFit, W, 0.42, 9 * p.m, 0, 0).scale;
+    const g = svgEl("g", { transform: `translate(${W / 2},${H / 2 + focusR * scale})` });
     svg.appendChild(g);
 
-    const nTeeth = 3;
+    const nTeeth = Math.max(3, Math.min(7, Math.floor(p.z1 / 6)));
+
+    // circular spline teeth near the top (fixed)
     const csOuter = HDMath.circlePoints(p.csOuterActual / 2, 400);
     const csInner = HDMath.circlePoints(p.Ra2, 400);
     const csAll = HDMath.buildCSRingTeethPoints(p, 40, 0);
     const csSubset = [];
-    for (let k = -nTeeth; k <= nTeeth; k++) {
-      csSubset.push(csAll[((k % p.z2) + p.z2) % p.z2]);
-    }
+    for (let k = -nTeeth; k <= nTeeth; k++) csSubset.push(csAll[((k % p.z2) + p.z2) % p.z2]);
     const csPath = svgEl("path", {
       d: buildRingPath([csOuter, csInner, ...csSubset], scale, 0),
       "fill-rule": "evenodd",
@@ -238,23 +287,18 @@
     csPath.style.strokeWidth = "1.2";
     g.appendChild(csPath);
 
-    const rot = ((num(els.rotation, 0) || 0) * Math.PI) / 180;
-    const fsHub = HDMath.circlePoints(p.Rf1, 400);
-    const fsBore = HDMath.circlePoints(p.bore, 400);
-    const fsAll = HDMath.buildFSRingTeethPoints(p, 40, 0);
-    const fsSubset = [];
+    // flexspline teeth near the top, deformed by the wave generator (each drawn
+    // as its own filled tooth so the engagement/clearance is obvious)
+    const fsAll = HDMath.buildFSRingTeethPoints(p, 40, 0).map((t) => warpEllipse(t, amp, rot));
     for (let k = -nTeeth; k <= nTeeth; k++) {
-      fsSubset.push(fsAll[((k % p.z1) + p.z1) % p.z1]);
+      const tooth = fsAll[((k % p.z1) + p.z1) % p.z1];
+      const path = svgEl("path", { d: loopToPathD(tooth, scale, 0) });
+      path.style.fill = "var(--fs-fill)";
+      path.style.stroke = "var(--fs-stroke)";
+      path.style.strokeWidth = "1.2";
+      path.style.opacity = "0.95";
+      g.appendChild(path);
     }
-    const fsPath = svgEl("path", {
-      d: buildRingPath([fsHub, fsBore, ...fsSubset], scale, rot),
-      "fill-rule": "evenodd",
-    });
-    fsPath.style.fill = "var(--fs-fill)";
-    fsPath.style.stroke = "var(--fs-stroke)";
-    fsPath.style.strokeWidth = "1.2";
-    fsPath.style.opacity = "0.92";
-    g.appendChild(fsPath);
   }
 
   // ------------------------------------------------------------------

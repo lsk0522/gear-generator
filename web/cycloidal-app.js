@@ -410,6 +410,23 @@
     els.points,
   ].forEach((el) => el && el.addEventListener("input", scheduleRender));
 
+  // Changing the overall size (pin pitch radius R) proportionally scales the
+  // bore and output-hole / shaft dimensions so the holes grow and shrink
+  // naturally with the disc instead of staying a fixed size.
+  let prevR = num(els.R, 30);
+  const sizeLinked = [els.bore, els.holePcd, els.holeDia, els.shaftDia, els.journalDia];
+  els.R.addEventListener("input", () => {
+    const newR = num(els.R, prevR);
+    if (newR > 0 && prevR > 0 && Math.abs(newR - prevR) > 1e-9) {
+      const f = newR / prevR;
+      for (const el of sizeLinked) {
+        const v = parseFloat(el.value);
+        if (isFinite(v)) el.value = +(v * f).toFixed(2);
+      }
+    }
+    prevR = newR;
+  });
+
   els.drive.addEventListener("input", () => {
     els.driveVal.textContent = els.drive.value + "°";
     redrawGeometry();
