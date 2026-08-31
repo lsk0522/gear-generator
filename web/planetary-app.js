@@ -185,13 +185,16 @@
     }
   }
 
+  const mainFit = ViewFit.make(),
+    detailFit = ViewFit.make();
+
   function renderMain(p, D) {
     const svg = els.svgMain;
     clear(svg);
     const W = 900,
       H = 900;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const scale = (W * 0.47) / p.ringOuter;
+    const scale = ViewFit.fit(mainFit, W, 0.47, p.ringOuter, 0, 0).scale;
     const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
     svg.appendChild(g);
     buildScene(g, p, scale, D);
@@ -203,9 +206,10 @@
     const W = 500,
       H = 500;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const scale = (W * 0.5) / (8 * p.m);
+    // scale is frozen against value edits; the focus still tracks the meshing
+    // contact live so it stays centred while the gears spin during animation.
+    const scale = ViewFit.fit(detailFit, W, 0.5, 8 * p.m, 0, 0).scale;
     const { gamma } = kinematics(p, D);
-    // focus on the sun-planet 0 contact (pitch point at radius rs along beta0)
     const beta0 = gamma;
     const fx = p.rs * Math.cos(beta0),
       fy = p.rs * Math.sin(beta0);
@@ -320,6 +324,18 @@
     els.driveVal.textContent = els.drive.value + "°";
     redraw();
   });
+  // config change is a big layout change — re-fit the view to it
+  els.config.addEventListener("change", () => {
+    ViewFit.reset(mainFit);
+    ViewFit.reset(detailFit);
+  });
+  // double-click a preview to re-fit it to the current geometry
+  [els.svgMain, els.svgDetail].forEach((svg, i) =>
+    svg.addEventListener("dblclick", () => {
+      ViewFit.reset(i === 0 ? mainFit : detailFit);
+      redraw();
+    })
+  );
 
   let playing = false,
     rafId = null,

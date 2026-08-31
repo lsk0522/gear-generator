@@ -360,23 +360,27 @@
     g.appendChild(c);
   }
 
+  const mainFit = ViewFit.make(),
+    detailFit = ViewFit.make();
+
   function renderMainSvg(p, drive) {
     const svg = els.svgMain;
     clear(svg);
     const W = 900,
       H = 900;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const extent = mainExtent(p);
-    const scale = (W * 0.46) / extent;
-    // centre the whole set: mid-point between the two parts
-    let midX = 0,
-      midY = 0;
-    if (p.gearIdx === 0 || p.gearIdx === 1) midX = p.center / 2;
-    else if (p.gearIdx === 3) {
-      midX = p.R * 0.32;
-      midY = 0;
-    } else if (p.gearIdx === 4) midX = p.wheelCenter / 2;
-    else if (p.gearIdx === 2) midX = p.offset / 2;
+    // desired centre: mid-point between the two parts
+    let idealMidX = 0,
+      idealMidY = 0;
+    if (p.gearIdx === 0 || p.gearIdx === 1) idealMidX = p.center / 2;
+    else if (p.gearIdx === 3) idealMidX = p.R * 0.32;
+    else if (p.gearIdx === 4) idealMidX = p.wheelCenter / 2;
+    else if (p.gearIdx === 2) idealMidX = p.offset / 2;
+    // sticky fit — steady view during live edits, auto-refit on big changes
+    const f = ViewFit.fit(mainFit, W, 0.46, mainExtent(p), idealMidX, idealMidY);
+    const scale = f.scale,
+      midX = f.midX,
+      midY = f.midY;
     const g = svgEl("g", { transform: `translate(${W / 2 - midX * scale},${H / 2 + midY * scale})` });
     svg.appendChild(g);
     buildScene(g, p, scale, drive, false);
@@ -390,9 +394,10 @@
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const pm = p.drawModule || p.module;
     // show roughly a 7-module-wide window around the contact point
-    const scale = (W * 0.5) / (7 * pm);
     const cp = p.gearIdx === 3 ? { x: p.rv1, y: 0 } : contactPoint(p);
-    const g = svgEl("g", { transform: `translate(${W / 2 - cp.x * scale},${H / 2 + cp.y * scale})` });
+    const f = ViewFit.fit(detailFit, W, 0.5, 7 * pm, cp.x, cp.y);
+    const scale = f.scale;
+    const g = svgEl("g", { transform: `translate(${W / 2 - f.midX * scale},${H / 2 + f.midY * scale})` });
     svg.appendChild(g);
     buildScene(g, p, scale, drive, true);
   }
@@ -599,6 +604,20 @@
     els.wormStarts,
     els.wormPitchDia,
   ].forEach((el) => el && el.addEventListener("input", scheduleRender));
+
+  // switching gear type is a big change — let the view re-fit to it
+  els.type.addEventListener("change", () => {
+    ViewFit.reset(mainFit);
+    ViewFit.reset(detailFit);
+  });
+
+  // double-click a preview to re-fit it to the current geometry
+  [els.svgMain, els.svgDetail].forEach((svg, i) =>
+    svg.addEventListener("dblclick", () => {
+      ViewFit.reset(i === 0 ? mainFit : detailFit);
+      redrawGeometry();
+    })
+  );
 
   els.drive.addEventListener("input", () => {
     els.driveVal.textContent = els.drive.value + "°";

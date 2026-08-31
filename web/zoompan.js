@@ -2,9 +2,12 @@
  * Lightweight zoom / pan for every preview SVG. Works by transforming the
  * <svg> element itself (CSS transform), so it survives the frequent inner
  * re-renders and animation without any cooperation from the render code.
- *   • wheel        → zoom toward the cursor
+ *   • Ctrl + wheel → zoom toward the cursor (plain wheel scrolls the page)
  *   • drag         → pan
  *   • double-click → reset
+ *
+ * Plain wheel is intentionally left to the page so the preview never zooms or
+ * shifts unless the user deliberately holds Ctrl.
  */
 (function () {
   "use strict";
@@ -28,6 +31,7 @@
     svg.addEventListener(
       "wheel",
       (e) => {
+        if (!e.ctrlKey) return; // plain wheel → let the page scroll normally
         e.preventDefault();
         const rect = svg.getBoundingClientRect();
         const cx = e.clientX - rect.left - rect.width / 2;

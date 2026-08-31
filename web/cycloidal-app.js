@@ -267,11 +267,13 @@
     return g;
   }
 
+  const mainFit = ViewFit.make(),
+    detailFit = ViewFit.make();
+
   function renderMainSvg(p) {
     const W = 900,
       H = 900;
-    const extent = p.R + p.Rr + 4;
-    const scale = (W * 0.46) / extent;
+    const scale = ViewFit.fit(mainFit, W, 0.46, p.R + p.Rr + 4, 0, 0).scale;
     buildSceneSvg(els.svgMain, p, W, H, scale, true, driveRad());
   }
 
@@ -280,7 +282,7 @@
       H = 500;
     const theta = driveRad();
     // zoom on the contact zone near the top pin (angle +90°, i.e. +y)
-    const scale = (W * 0.42) / (2 * (p.Rr + Math.abs(p.E) + 1));
+    const scale = ViewFit.fit(detailFit, W, 0.21, p.Rr + Math.abs(p.E) + 1, 0, 0).scale;
     clear(els.svgDetail);
     els.svgDetail.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const focus = { x: 0, y: p.R }; // the top fixed pin — where a lobe engages
@@ -412,6 +414,14 @@
     els.driveVal.textContent = els.drive.value + "°";
     redrawGeometry();
   });
+
+  // double-click a preview to re-fit it to the current geometry
+  [els.svgMain, els.svgDetail].forEach((svg, i) =>
+    svg.addEventListener("dblclick", () => {
+      ViewFit.reset(i === 0 ? mainFit : detailFit);
+      redrawGeometry();
+    })
+  );
 
   // play / pause the eccentric-driven meshing animation
   let playing = false;

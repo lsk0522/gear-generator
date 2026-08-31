@@ -143,13 +143,16 @@
     }
   }
 
+  const mainFit = ViewFit.make(),
+    detailFit = ViewFit.make();
+
   function renderMainSvg(p) {
     const svg = els.svgMain;
     clear(svg);
     const W = 900,
       H = 900;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const scale = (W * 0.46) / (p.csOuterActual / 2);
+    const scale = ViewFit.fit(mainFit, W, 0.46, p.csOuterActual / 2, 0, 0).scale;
     const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
     svg.appendChild(g);
 
@@ -213,8 +216,8 @@
     const W = 500,
       H = 500;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    // zoom on a handful of teeth near the top (angle 0)
-    const scale = 260 / p.m;
+    // zoom on a handful of teeth near the top (angle 0) — steady across edits
+    const scale = ViewFit.fit(detailFit, W, 0.52, p.m, 0, 0).scale;
     const g = svgEl("g", { transform: `translate(${W / 2},${H * 0.72})` });
     svg.appendChild(g);
 
@@ -342,6 +345,14 @@
     els.rotationVal.textContent = els.rotation.value + "°";
     scheduleRender();
   });
+
+  // double-click a preview to re-fit it to the current geometry
+  [els.svgMain, els.svgDetail].forEach((svg, i) =>
+    svg.addEventListener("dblclick", () => {
+      ViewFit.reset(i === 0 ? mainFit : detailFit);
+      render();
+    })
+  );
 
   render();
 })();
