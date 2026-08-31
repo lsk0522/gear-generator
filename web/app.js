@@ -14,6 +14,7 @@
     toothDiff: $("#in-toothdiff"),
     rotation: $("#in-rotation"),
     rotationVal: $("#in-rotation-val"),
+    play: $("#in-play"),
     resultGrid: $("#result-grid"),
     warnings: $("#warnings"),
     svgMain: $("#svg-main"),
@@ -147,21 +148,33 @@
     detailFit = ViewFit.make();
 
   // Exaggerated wave-generator deflection for the *preview* only (the real
-  // radial deformation is ~1-2% of R and invisible at this scale). Capped so
-  // the flexspline teeth at the major axis mesh into the circular spline
-  // without poking past its outer rim. DXF export stays physically exact.
+  // radial deformation is ~1-2% of R and invisible at this scale). DXF export
+  // stays physically exact.
+  //
+  // To avoid tooth interference we pull the flexspline slightly inward (defShift)
+  // so its teeth sit clear inside the circular spline everywhere EXCEPT the two
+  // major-axis zones, where the ellipse pushes them out to mesh. Combined with a
+  // half-pitch phase offset (so an FS tooth nests in a CS gap at the major axis)
+  // this gives a clean two-zone mesh with clearance elsewhere.
+  function defShift(p) {
+    return 1.6 * p.m;
+  }
   function defAmp(p) {
-    const want = Math.max(p.m * p.w0Star * 3, 0.05 * p.R1);
-    const cap = p.csOuterActual / 2 - p.Ra1 - 0.3 * p.m;
-    return Math.max(0.5, Math.min(want, cap));
+    const shift = defShift(p);
+    // major-axis tip = Ra1 - shift + amp lands ~0.6·m into the CS tooth gap,
+    // and stays below the circular-spline outer rim.
+    const want = shift + 0.6 * p.m;
+    const cap = p.csOuterActual / 2 - 0.3 * p.m - p.Ra1 + shift;
+    return Math.max(0.4, Math.min(want, cap));
   }
 
   // Warp a loop given in {x:r·sinθ, y:r·cosθ} form into an ellipse whose major
-  // axis points along `rot` (measured from +Y), radial amplitude `amp`.
-  function warpEllipse(loop, amp, rot) {
+  // axis points along `rot` (from +Y), amplitude `amp`, pulled inward by `shift`.
+  function warpEllipse(loop, amp, rot, shift) {
+    shift = shift || 0;
     return loop.map((pt) => {
       const th = Math.atan2(pt.x, pt.y);
-      const r = Math.hypot(pt.x, pt.y) + amp * Math.cos(2 * (th - rot));
+      const r = Math.hypot(pt.x, pt.y) - shift + amp * Math.cos(2 * (th - rot));
       return { x: r * Math.sin(th), y: r * Math.cos(th) };
     });
   }
@@ -228,11 +241,14 @@
     // toothed rim and hub warp elliptically, the output bore stays round. The
     // teeth engage the circular spline at the two major-axis ends and clear it
     // at the minor-axis ends; turning the WG slider sweeps the mesh around.
-    const fsHub = warpEllipse(HDMath.circlePoints(p.Rf1, 220), amp, rot);
+    const shift = defShift(p);
+    // half-CS-pitch phase so an FS tooth nests in a CS gap at the major axis
+    const phase = Math.PI / p.z2;
+    const fsHub = warpEllipse(HDMath.circlePoints(p.Rf1, 220), amp, rot, shift);
     // bore warps with the rim too (thin flexsplines would otherwise invert)
-    const fsBore = warpEllipse(HDMath.circlePoints(p.bore, 220), amp, rot);
-    const fsTeeth = HDMath.buildFSRingTeethPoints(p, nSegDisplay, 0).map((t) =>
-      warpEllipse(t, amp, rot)
+    const fsBore = warpEllipse(HDMath.circlePoints(p.bore, 220), amp, rot, shift);
+    const fsTeeth = HDMath.buildFSRingTeethPoints(p, nSegDisplay, phase).map((t) =>
+      warpEllipse(t, amp, rot, shift)
     );
     const fsPath = svgEl("path", {
       d: buildRingPath([fsHub, fsBore, ...fsTeeth], scale, 0),
@@ -288,8 +304,12 @@
     g.appendChild(csPath);
 
     // flexspline teeth near the top, deformed by the wave generator (each drawn
-    // as its own filled tooth so the engagement/clearance is obvious)
-    const fsAll = HDMath.buildFSRingTeethPoints(p, 40, 0).map((t) => warpEllipse(t, amp, rot));
+    // as its own filled tooth so the engagement/clearance is obvious). Same
+    // inward shift + half-pitch phase as the main view, so the teeth mesh in
+    // the CS gaps at the major axis without interfering.
+    const shift = defShift(p);
+    const phase = Math.PI / p.z2;
+    const fsAll = HDMath.buildFSRingTeethPoints(p, 40, phase).map((t) => warpEllipse(t, amp, rot, shift));
     for (let k = -nTeeth; k <= nTeeth; k++) {
       const tooth = fsAll[((k % p.z1) + p.z1) % p.z1];
       const path = svgEl("path", { d: loopToPathD(tooth, scale, 0) });
@@ -385,9 +405,51 @@
     (el) => el && el.addEventListener("input", scheduleRender)
   );
 
+  // The WG rotation only changes the deformation phase, not the derived params,
+  // so redraw geometry from the last params instead of recomputing everything.
+  function redrawGeometry() {
+    if (!lastParams) return;
+    renderMainSvg(lastParams);
+    renderDetailSvg(lastParams);
+  }
+
   els.rotation.addEventListener("input", () => {
     els.rotationVal.textContent = els.rotation.value + "°";
-    scheduleRender();
+    redrawGeometry();
+  });
+
+  // play / pause the wave-generator animation (mesh sweeps around the ring)
+  let playing = false,
+    rafId = null,
+    lastT = 0;
+  function tick(t) {
+    if (!playing) return;
+    if (!lastT) lastT = t;
+    const dt = (t - lastT) / 1000;
+    lastT = t;
+    let v = num(els.rotation, 0) + dt * 60; // 60 deg/sec
+    v = ((v % 360) + 360) % 360;
+    els.rotation.value = v.toFixed(1);
+    els.rotationVal.textContent = Math.round(v) + "°";
+    redrawGeometry();
+    rafId = requestAnimationFrame(tick);
+  }
+  els.play.addEventListener("click", () => {
+    playing = !playing;
+    els.play.textContent = playing ? "⏸ 정지" : "▶ 재생";
+    if (playing) {
+      lastT = 0;
+      rafId = requestAnimationFrame(tick);
+    } else if (rafId) {
+      cancelAnimationFrame(rafId);
+    }
+  });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden && playing) {
+      playing = false;
+      els.play.textContent = "▶ 재생";
+      if (rafId) cancelAnimationFrame(rafId);
+    }
   });
 
   // double-click a preview to re-fit it to the current geometry
