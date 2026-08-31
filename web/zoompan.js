@@ -1,13 +1,12 @@
 /**
- * Lightweight zoom / pan for every preview SVG. Works by transforming the
- * <svg> element itself (CSS transform), so it survives the frequent inner
- * re-renders and animation without any cooperation from the render code.
+ * Lightweight zoom for every preview SVG. Works by transforming the <svg>
+ * element itself (CSS transform), so it survives the frequent inner re-renders
+ * and animation without any cooperation from the render code.
  *   • Ctrl + wheel → zoom toward the cursor (plain wheel scrolls the page)
- *   • drag         → pan
- *   • double-click → reset
+ *   • double-click → reset zoom
  *
- * Plain wheel is intentionally left to the page so the preview never zooms or
- * shifts unless the user deliberately holds Ctrl.
+ * Drag-to-pan was intentionally removed — the preview never moves on its own,
+ * and it stays put unless the user deliberately Ctrl+wheels to zoom.
  */
 (function () {
   "use strict";
@@ -15,18 +14,12 @@
   function attach(svg) {
     let scale = 1,
       tx = 0,
-      ty = 0,
-      dragging = false,
-      startX = 0,
-      startY = 0;
+      ty = 0;
 
     function apply() {
       svg.style.transformOrigin = "center center";
       svg.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
     }
-
-    svg.style.cursor = "grab";
-    svg.style.touchAction = "none";
 
     svg.addEventListener(
       "wheel",
@@ -48,27 +41,6 @@
       { passive: false }
     );
 
-    svg.addEventListener("pointerdown", (e) => {
-      dragging = true;
-      startX = e.clientX - tx;
-      startY = e.clientY - ty;
-      try {
-        svg.setPointerCapture(e.pointerId);
-      } catch (_) {}
-      svg.style.cursor = "grabbing";
-    });
-    svg.addEventListener("pointermove", (e) => {
-      if (!dragging) return;
-      tx = e.clientX - startX;
-      ty = e.clientY - startY;
-      apply();
-    });
-    function end() {
-      dragging = false;
-      svg.style.cursor = "grab";
-    }
-    svg.addEventListener("pointerup", end);
-    svg.addEventListener("pointercancel", end);
     svg.addEventListener("dblclick", (e) => {
       e.preventDefault();
       scale = 1;
