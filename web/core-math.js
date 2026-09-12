@@ -1,101 +1,56 @@
 /**
- * Harmonic Drive cycloid tooth profile — shared math core.
+ * Harmonic Drive cycloid tooth profile — shared math core (rev 2).
  *
- * Implements a closed-form cycloid tooth profile (CTP) construction based on:
+ * Implements the fully-conjugate cycloid tooth profile (CTP) of:
  *   Yao, Y.; Lu, L.; Chen, X.; Xie, Y.; Yang, Y.; Xing, J.
  *   "A Novel Cycloid Tooth Profile for Harmonic Drive with Fully Conjugate
  *   Features." Actuators 2025, 14(4), 187. https://doi.org/10.3390/act14040187
  *
- * What is implemented directly from the paper (verified against the paper's
- * own worked case study, Eq. 22):
- *   - Elliptical wave-generator neutral-line shape under the mid-line
- *     non-elongation assumption (Eq. 1, 8) — the minor semi-axis rho_b is
- *     solved numerically so the deformed neutral-line arc length over a
- *     quarter turn equals rm * pi/2, exactly the constraint the paper states.
- *   - The "D-cycloid" / "U-cycloid" tooth-flank curves (Eq. 9-13) used as the
- *     addendum flank of the circular spline (CS) and, by the point-symmetric
- *     mapping the paper proves is valid (Sec. 2.3, "X-halved cycloid tooth
- *     trajectory"), the addendum flank of the flexspline (FS).
+ * This is a full rewrite over the first version of this file. The first
+ * version used the paper's closed-form D/U-cycloid equations (Eq. 11-13)
+ * directly as an APPROXIMATION of the conjugate flank, with a hand-tuned
+ * clearance-safe fillet standing in for the dedendum. This version instead
+ * runs the actual construction the paper (and Sec. 3.2-3.4 in particular)
+ * describes:
  *
- * Simplification vs. the paper (documented, not hidden):
- *   - The paper additionally runs a numerical envelope computation
- *     (Eq. 14-15) plus a least-squares refit (Sec. 3.3-3.4) to derive
- *     "bidirectional conjugate" dedendum (root) flanks and to optimize
- *     backlash uniformity. That refinement is not implemented here — the
- *     addendum flanks (the only flanks that carry contact load) use the
- *     paper's cycloid construction directly; the dedendum (root) flanks use
- *     a simple clearance-safe cycloidal fillet of the same family, sized so
- *     it never overlaps the neighboring tooth. Root fillets are never load
- *     bearing in a harmonic drive, so this does not affect meshing validity.
+ *   - the flexspline addendum flank is the tooth-angle-truncated x-halved
+ *     cycloid of Eq. (11), truncated at parameter tE where the joint tangent
+ *     angle equals alpha0 (Sec. 3.3) instead of running to the pitch-line
+ *     cusp at t=0;
+ *   - the dedendum flank is that SAME curve rotated 180 degrees about the
+ *     pitch point (Eq. 12's point symmetry), not a separately-tuned fillet;
+ *   - the circular-spline tooth space is computed as the actual numerical
+ *     ENVELOPE (Eq. 14-15) of the flexspline tooth swept through one full
+ *     wave-generator engagement — implemented here as a max-radius
+ *     rasterization over angular bins, which sidesteps solving the envelope
+ *     condition in closed form and is what makes "fully conjugate" true
+ *     rather than approximate;
+ *   - the elliptical wave-generator neutral line (Eq. 8) uses the paper's
+ *     own closed form for the minor semi-axis b (via the mid-line
+ *     inextensibility condition), not the arc-length bisection the first
+ *     version of this file used (both agree to float precision - the
+ *     bisection was a correct but slower way to the same answer).
+ *
+ * Deliberately out of scope: the S-tooth (double circular arc) alternative
+ * profile, pancake-style dual output spline, and backlash/strain/mesh
+ * performance metrics are additional features some other CTP tools built on
+ * this same paper offer; only the cup-style cycloid path is implemented
+ * here.
  */
 
 (function (global) {
   "use strict";
 
   // ---------------------------------------------------------------------
-  // Numerical helpers
+  // Small numeric helpers
   // ---------------------------------------------------------------------
 
-  function simpson(f, a, b, n) {
-    n = n || 400;
-    if (n % 2 === 1) n += 1;
-    const h = (b - a) / n;
-    let s = f(a) + f(b);
-    for (let i = 1; i < n; i++) {
-      s += f(a + i * h) * (i % 2 ? 4 : 2);
-    }
-    return (s * h) / 3;
-  }
-
-  // ---------------------------------------------------------------------
-  // Wave generator: elliptical neutral line, non-elongation condition
-  // ---------------------------------------------------------------------
-
-  /**
-   * rho(phi1) per Eq.(8): polar radius of the FS neutral line under an
-   * elliptical wave generator with semi-axes rhoA (along Y, "major") and
-   * rhoB (along X, "minor").
-   */
-  function rho(phi1, rhoA, rhoB) {
-    const s = Math.sin(phi1), c = Math.cos(phi1);
-    const D = rhoA * rhoA * s * s + rhoB * rhoB * c * c;
-    return (rhoA * rhoB) / Math.sqrt(D);
-  }
-
-  function drho(phi1, rhoA, rhoB) {
-    const s = Math.sin(phi1), c = Math.cos(phi1);
-    const D = rhoA * rhoA * s * s + rhoB * rhoB * c * c;
-    const Dp = Math.sin(2 * phi1) * (rhoA * rhoA - rhoB * rhoB);
-    return (-rhoA * rhoB * Dp) / (2 * Math.pow(D, 1.5));
-  }
-
-  function neutralLineArcLength(rhoA, rhoB) {
-    return simpson(
-      (phi) => {
-        const r = rho(phi, rhoA, rhoB);
-        const dr = drho(phi, rhoA, rhoB);
-        return Math.sqrt(r * r + dr * dr);
-      },
-      0,
-      Math.PI / 2,
-      800
-    );
-  }
-
-  /**
-   * Solve rhoB such that the quarter-turn arc length of the deformed neutral
-   * line equals rm * pi/2 (Eq. 1's implicit constraint: the un-deformed
-   * quarter circumference maps exactly onto phi1 in [0, pi/2]).
-   */
-  function solveRhoB(rm, rhoA) {
-    const target = (rm * Math.PI) / 2;
-    let lo = rhoA * 0.5,
-      hi = rhoA;
-    let flo = neutralLineArcLength(rhoA, lo) - target;
-    for (let i = 0; i < 80; i++) {
+  function bisect(f, lo, hi, iters) {
+    iters = iters || 60;
+    let flo = f(lo);
+    for (let i = 0; i < iters; i++) {
       const mid = 0.5 * (lo + hi);
-      const fm = neutralLineArcLength(rhoA, mid) - target;
-      if (Math.abs(fm) < 1e-9) return mid;
+      const fm = f(mid);
       if (fm > 0 === flo > 0) {
         lo = mid;
         flo = fm;
@@ -107,297 +62,694 @@
   }
 
   // ---------------------------------------------------------------------
-  // Cycloid tooth flank primitives (Eq. 9-13)
+  // Derived geometry
   // ---------------------------------------------------------------------
 
-  /** Scaled D-cycloid displacement, amplitude k*m, t in [0, pi]. */
-  function dCycloid(t, k, m) {
+  const DEFAULTS = {
+    module: 1.25,
+    zf: 100, // flexspline tooth count
+    zc: 102, // circular spline tooth count
+    w0Ratio: 1.0, // radial deflection / module (w0*)
+    ha: 1.0, // addendum height to the tip apex, in modules
+    hd: 1.0, // dedendum depth to the root circle, in modules
+    toothAngle: 9.17, // deg — cycloid joint tooth angle alpha0 (paper's Table 2 case)
+    toothThickness: 0.5, // fraction of circular pitch given to the tooth (<=0.5)
+    rootFillet: 0.15, // module units — tangent fillet at the root land
+    clearance: 0.05, // module units — backlash cut into the circular-spline slot
+    wallFlex: 0.75, // mm — flexspline wall thickness under the root
+    wallCirc: 3.0, // mm — circular-spline wall thickness behind the slot
+  };
+
+  /** Max cycloid tooth angle before the flank truncates to nothing. */
+  function maxToothAngle(s0, ha) {
+    return Math.atan(s0 / (2 * ha));
+  }
+
+  /** Joint parameter tE such that the truncated-cycloid flank's tangent
+   * angle at the pitch line equals alpha0 (Sec. 3.3). Solved by bisection
+   * on tan(alpha0) = s0*sin(t) / (ha*(pi - t + sin t)), monotonic in t. */
+  function solveJointParam(s0, ha, alpha0) {
+    if (!(alpha0 > 0)) return 0;
+    const target = Math.tan(alpha0);
+    return bisect((t) => s0 * Math.sin(t) / (ha * (Math.PI - t + Math.sin(t))) - target, 0, Math.PI);
+  }
+
+  function deriveGeometry(input) {
+    const m = input.module ?? DEFAULTS.module;
+    const zf = Math.round(input.zf ?? DEFAULTS.zf);
+    const zc = Math.round(input.zc ?? DEFAULTS.zc);
+    const w0Ratio = input.w0Ratio ?? DEFAULTS.w0Ratio;
+    const haStar = input.ha ?? DEFAULTS.ha;
+    const hdStar = input.hd ?? DEFAULTS.hd;
+    const rootFilletStar = input.rootFillet ?? DEFAULTS.rootFillet;
+    const clearanceStar = input.clearance ?? DEFAULTS.clearance;
+    const toothThicknessFrac = Math.min(0.5, Math.max(1e-3, input.toothThickness ?? DEFAULTS.toothThickness));
+    const wallFlex = input.wallFlex ?? DEFAULTS.wallFlex;
+    const wallCirc = input.wallCirc ?? DEFAULTS.wallCirc;
+
+    const rp = (m * zf) / 2; // flexspline pitch / neutral radius
+    const w0 = w0Ratio * m; // radial deflection at the major axis
+
+    // Elliptical neutral line (Eq. 8): a = major semi-axis, b from midline
+    // inextensibility (closed form; equivalent to the arc-length integral
+    // condition, verified against the paper's own worked example).
+    const a = rp + w0;
+    let b = (1 / 9) * (12 * rp - 7 * a + 4 * Math.sqrt(Math.max(0, a * (3 * rp - 2 * a))));
+    if (!(b > 0)) b = 1e-6;
+
+    const s0 = (toothThicknessFrac * Math.PI * m) / 2; // half tooth thickness at pitch
+    const ha = haStar * m;
+    const hd = hdStar * m;
+    const rootFillet = rootFilletStar * m;
+    const clearance = clearanceStar * m;
+
+    let alpha0 = ((input.toothAngle ?? DEFAULTS.toothAngle) * Math.PI) / 180;
+    alpha0 = Math.max(0, Math.min(alpha0, 0.98 * maxToothAngle(s0, ha)));
+    const tE = solveJointParam(s0, ha, alpha0);
+
+    const warnings = [];
+    if (zc <= zf) warnings.push("서큘러스플라인 잇수(zc)는 플렉스스플라인 잇수(zf)보다 많아야 합니다.");
+    const stroke = a - b;
+    const strokeMargin = ha + hd + clearance - stroke;
+    if (strokeMargin < 0) {
+      warnings.push(
+        "이 높이(ha+hd)로는 파형발생기 반경 스트로크를 다 감당하지 못합니다 — ha*/hd*를 늘리거나 w0*를 줄이세요."
+      );
+    }
+
     return {
-      dx: (k * m * (t - Math.sin(t))) / 4,
-      dy: (k * m * (1 + Math.cos(t))) / 2,
+      m,
+      zf,
+      zc,
+      rp,
+      rm: rp,
+      w0,
+      a,
+      b,
+      ha,
+      hd,
+      haStar,
+      hdStar,
+      s0,
+      toothThickness: toothThicknessFrac,
+      rootFillet,
+      clearance,
+      alpha0,
+      tE,
+      halfPitch: (Math.PI * m) / 2, // half circular pitch, arc length at rp
+      wallFlex,
+      wallCirc,
+      stroke,
+      strokeMargin,
+      warnings,
+      feasible: zc > zf && strokeMargin >= 0 && wallFlex > 0,
     };
   }
 
   // ---------------------------------------------------------------------
-  // Parameter derivation from (module, OD, ID)
+  // Wave-generator deformation (Eq. 4, 8)
   // ---------------------------------------------------------------------
 
-  const DEFAULTS = {
-    haStar: 1.0, // addendum height coefficient
-    hfStar: 1.25, // dedendum height coefficient (c* = 0.25 clearance)
-    w0Star: 1.0, // max radial deformation coefficient (rho_a = rm + m*w0*)
-    csRimFactor: 3.0, // CS structural rim beyond addendum circle, in modules
-    dedendumXTaper: 0.6, // shrink factor (of hfStar) on dedendum tangential sweep (clearance safety)
-    addendumXTaper: 0.92, // shrink factor (of haStar) on addendum tangential sweep (avoids zero-clearance tip touching)
-    fsToothDiffFactor: 2, // z2 - z1 (standard single-wave two-tooth-difference HD)
-    filletXFraction: 1.0, // (kept for API symmetry; fillet uses dedendumXTaper)
-  };
+  /** Radial displacement w, tangential displacement v and section deflection
+   * mu of the deformed flexspline neutral line at angle psi from the major
+   * axis. */
+  function waveDeform(d, psi) {
+    const { a, b } = d;
+    const s = Math.sin(psi),
+      c = Math.cos(psi);
+    const D = a * a * s * s + b * b * c * c;
+    const rho = (a * b) / Math.sqrt(D);
+    const rhoP = (-a * b * (a * a - b * b) * Math.sin(2 * psi)) / (2 * Math.pow(D, 1.5));
+    const mu = -Math.atan2(rhoP, rho);
+    // First-order tangential displacement from midline inextensibility
+    // (dv/dpsi = -w); higher-order terms are ~(w0/rm)^2 and dropped, matching
+    // the paper's own approximation order.
+    const v = (-d.w0 / 2) * Math.sin(2 * psi);
+    return { rho, w: rho - d.rm, v, mu };
+  }
 
-  /**
-   * Derive every quantity needed to build the tooth profiles and the wave
-   * generator cam from just (module, outer diameter, inner diameter).
-   *
-   * OD = outer diameter of the circular-spline ring (structural OD).
-   * ID = inner bore diameter of the flexspline cup (through-bore for shaft).
-   */
-  function deriveHDParams(input) {
-    const m = input.m;
-    const OD = input.OD;
-    const ID = input.ID;
-    const haStar = input.haStar ?? DEFAULTS.haStar;
-    const hfStar = input.hfStar ?? DEFAULTS.hfStar;
-    const w0Star = input.w0Star ?? DEFAULTS.w0Star;
-    const csRim = input.csRim ?? DEFAULTS.csRimFactor * m;
-    const dedendumXTaper = input.dedendumXTaper ?? DEFAULTS.dedendumXTaper;
-    const addendumXTaper = input.addendumXTaper ?? DEFAULTS.addendumXTaper;
-    const toothDiff = input.toothDiff ?? DEFAULTS.fsToothDiffFactor;
+  /** Rotate a tooth-local point (x tangential, y radial-from-pitch-line) into
+   * a deformed cross-section with rotation mu, returning (tangential,
+   * radial) offsets from that section's neutral point. The local frame
+   * (x=tangential, y=radial) is left-handed w.r.t. (e_r, e_theta), so the
+   * physical rotation applied here is +mu (not the textbook -mu) for the
+   * tooth's own radial axis to end up along the deformed midline's outward
+   * normal. */
+  function rotateIntoSection(x, y, cosMu, sinMu) {
+    return { t: x * cosMu + y * sinMu, r: -x * sinMu + y * cosMu };
+  }
 
-    const warnings = [];
-
-    // --- Circular spline (internal gear) ---
-    const Ra2raw = OD / 2 - csRim;
-    let z2 = Math.round(2 * (Ra2raw / m + haStar));
-    if (z2 < 60) {
-      warnings.push(
-        `산출된 서큘러스플라인 잇수(z2=${z2})가 매우 적습니다. 모듈을 줄이거나 외경을 늘려주세요.`
-      );
-      z2 = Math.max(z2, 12);
-    }
-    const Ra2 = m * (z2 / 2 - haStar); // recompute exactly for integer z2
-    const R2 = Ra2 + haStar * m; // CS pitch radius
-    const Rf2 = R2 + hfStar * m; // CS root (dedendum) radius, outward
-    const csOuterActual = 2 * (Rf2 + csRim * 0.4); // keep rim beyond root too
-
-    // --- Flexspline (external gear) ---
-    const z1 = z2 - toothDiff;
-    const ratio = z1 / toothDiff; // reduction ratio N = z1 / (z2 - z1)
-    const R1 = (m * z1) / 2; // FS pitch radius (undeformed)
-    const Ra1 = R1 + haStar * m; // FS addendum (tip) radius, outward
-    const Rf1 = R1 - hfStar * m; // FS dedendum (root) radius, inward
-
-    const bore = ID / 2;
-    const wallFS = Rf1 - bore; // flexspline cup wall thickness beneath the root
-    if (wallFS <= m * 0.3) {
-      warnings.push(
-        `플렉스스플라인 벽 두께(${wallFS.toFixed(
-          2
-        )} mm)가 너무 얇습니다. 내경을 줄이거나 외경/모듈을 조정해주세요.`
-      );
-    } else if (wallFS > 0.05 * R1) {
-      warnings.push(
-        `플렉스스플라인 벽 두께(${wallFS.toFixed(
-          2
-        )} mm)가 실제 하모닉 드라이브 대비 두껍습니다(탄성 변형이 어려울 수 있음). ` +
-          `일반적으로 내경을 이뿌리원 지름에 가깝게 설정합니다. 참고 벽 두께: ${(
-            0.02 * R1
-          ).toFixed(2)} mm 내외.`
-      );
-    }
-    const rm = R1 - wallFS / 2; // neutral-line radius approximation (mid-wall)
-
-    // --- Wave generator neutral line (elliptical, non-elongation) ---
-    const rhoA = rm + m * w0Star;
-    const rhoB = solveRhoB(rm, rhoA);
-
-    // --- Tooth thickness / space width at pitch circle (50/50 split) ---
-    const et2 = (Math.PI * m) / 2; // CS space width at pitch
-    const s1 = (Math.PI * m) / 2; // FS tooth thickness at pitch
-
-    // Axial face width - auto-derived, not user input (see hd_math.py note).
-    const baseWidth = Math.max(8.0 * m, 0.1 * OD);
-    const fsWidth = baseWidth;
-    const csWidth = baseWidth * 1.2;
-    const wgWidth = baseWidth * 0.8;
-
-    return {
-      m,
-      OD,
-      ID,
-      haStar,
-      hfStar,
-      w0Star,
-      csRim,
-      dedendumXTaper,
-      addendumXTaper,
-      toothDiff,
-      z1,
-      z2,
-      ratio,
-      R1,
-      Ra1,
-      Rf1,
-      R2,
-      Ra2,
-      Rf2,
-      csOuterActual,
-      wallFS,
-      rm,
-      rhoA,
-      rhoB,
-      et2,
-      s1,
-      bore,
-      csWidth,
-      fsWidth,
-      wgWidth,
-      warnings,
-      feasible: wallFS > m * 0.15 && z1 > 20,
-    };
+  /** Place a sectioned (tangential t, radial r) offset at body angle theta
+   * and neutral radius R, in the polar convention (matches everywhere a
+   * tooth point is placed: radius R+r, angle theta + t/(R+r)). */
+  function polarPlace(R, theta, t, r) {
+    const rad = R + r;
+    const ang = theta + t / (rad || 1);
+    return { x: rad * Math.cos(ang), y: rad * Math.sin(ang), rad, ang };
   }
 
   // ---------------------------------------------------------------------
   // Tooth flank curves
-  //   CS: coordinates are already global-Cartesian (S2 origin = gear center)
-  //   FS: coordinates are LOCAL (S1 origin = O1 on the pitch circle); the
-  //       caller must place them via placeLocalOnPitch() below.
   // ---------------------------------------------------------------------
 
-  /** CS addendum flank (right half), t in [0, pi]: t=0 pitch, t=pi tip (inward). */
-  function csAddendumPoint(t, p) {
-    const kx = p.haStar * p.addendumXTaper;
-    const { dx } = dCycloid(t, kx, p.m);
-    const { dy } = dCycloid(t, p.haStar, p.m);
-    return { x: p.et2 / 2 + dx, y: p.R2 - p.haStar * p.m + dy };
+  /** Normalized x-halved cycloid (Eq. 11), truncated at t=tE and rescaled so
+   * u=0 lands on the pitch point and u=1 on the crest (t=pi). Returns the
+   * fractional (x, y) position in [0,1]x[0,1]. */
+  function cycloidUnit(u, tE) {
+    const t = tE + (Math.PI - tE) * u;
+    const XE = tE - Math.sin(tE),
+      cE = Math.cos(tE);
+    return {
+      fx: (t - Math.sin(t) - XE) / (Math.PI - XE),
+      fy: (cE - Math.cos(t)) / (1 + cE),
+    };
   }
 
-  /** CS dedendum/root flank (right half), t in [0, pi]: t=0 pitch, t=pi root (outward). */
-  function csDedendumPoint(t, p) {
-    const kx = p.hfStar * p.dedendumXTaper;
-    const { dx } = dCycloid(t, kx, p.m);
-    const { dy } = dCycloid(t, p.hfStar, p.m);
-    return { x: p.et2 / 2 - dx, y: p.R2 + p.hfStar * p.m - dy };
+  /** Addendum flank as a function of u in [0,1]: u=0 at the pitch point
+   * (s0, 0), u=1 at the crest (0, ha). */
+  function addendumFlank(d) {
+    return (u) => {
+      const c = cycloidUnit(u, d.tE);
+      return { x: d.s0 * (1 - c.fx), y: d.ha * c.fy };
+    };
   }
 
-  /** FS addendum flank (right half), LOCAL coords, t in [0, pi]: t=0 pitch (y=0), t=pi tip. */
-  function fsAddendumPoint(t, p) {
-    const kx = p.haStar * p.addendumXTaper;
-    const { dx } = dCycloid(t, kx, p.m);
-    const { dy } = dCycloid(t, p.haStar, p.m);
-    return { x: p.s1 / 2 - dx, y: p.haStar * p.m - dy };
-  }
-
-  /** FS dedendum/root flank (right half), LOCAL coords, t in [0, pi]: t=0 pitch (y=0), t=pi root. */
-  function fsDedendumPoint(t, p) {
-    const kx = p.hfStar * p.dedendumXTaper;
-    const { dx } = dCycloid(t, kx, p.m);
-    const { dy } = dCycloid(t, p.hfStar, p.m);
-    return { x: p.s1 / 2 + dx, y: -p.hfStar * p.m + dy };
-  }
-
-  /**
-   * Place a LOCAL FS point (x1 = tangential offset, y1 = radial offset from
-   * the pitch circle) at tooth index k out of z, symmetry line at angle
-   * baseAngle (radians, measured from +Y, clockwise-positive to match SVG).
-   */
-  function placeLocalOnPitch(x1, y1, R, k, z, baseAngle) {
-    baseAngle = baseAngle || 0;
-    const radius = R + y1;
-    const ang = baseAngle + (k * 2 * Math.PI) / z + x1 / radius;
-    return { x: radius * Math.sin(ang), y: radius * Math.cos(ang) };
-  }
-
-  /** Rotate a global CS point (already Cartesian, origin = gear center). */
-  function placeGlobal(x2, y2, k, z, baseAngle) {
-    baseAngle = baseAngle || 0;
-    const ang = baseAngle + (k * 2 * Math.PI) / z;
-    const c = Math.cos(ang),
-      s = Math.sin(ang);
-    return { x: x2 * c - y2 * s, y: x2 * s + y2 * c };
+  /** Dedendum flank: the addendum flank rotated 180 degrees about the pitch
+   * point (s0, 0) — Eq. (12)'s point symmetry — so (x,y) -> (2*s0 - x, -y).
+   * The root crest this puts at x=2*s0 sets the root-land width: at the
+   * default 50/50 tooth thickness that's exactly half the circular pitch,
+   * so at full depth neighboring teeth meet with zero root land. */
+  function dedendumFlank(addFn, s0) {
+    return (u) => {
+      const q = addFn(u);
+      return { x: 2 * s0 - q.x, y: -q.y };
+    };
   }
 
   // ---------------------------------------------------------------------
-  // Full single-tooth outline builders (right flank + mirrored left flank)
+  // Arc-length-uniform sampling and tangent-fillet fitting
   // ---------------------------------------------------------------------
 
-  function sampleFlank(fn, p, nSeg) {
-    nSeg = nSeg || 24;
+  function resampleByArcLength(fn, uEnd, n) {
+    const M = 300;
     const pts = [];
-    for (let i = 0; i <= nSeg; i++) {
-      const t = (Math.PI * i) / nSeg;
-      pts.push(fn(t, p));
+    for (let i = 0; i <= M; i++) pts.push(fn((uEnd * i) / M));
+    const cum = [0];
+    for (let i = 1; i <= M; i++) {
+      cum.push(cum[i - 1] + Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y));
+    }
+    const total = cum[M];
+    const out = [];
+    let j = 0;
+    for (let i = 0; i <= n; i++) {
+      const target = (total * i) / n;
+      while (j < M - 1 && cum[j + 1] < target) j++;
+      const seg = cum[j + 1] - cum[j];
+      const f = seg > 1e-15 ? (target - cum[j]) / seg : 0;
+      out.push({
+        x: pts[j].x + (pts[j + 1].x - pts[j].x) * Math.min(f, 1),
+        y: pts[j].y + (pts[j + 1].y - pts[j].y) * Math.min(f, 1),
+      });
+    }
+    out[n] = pts[M];
+    return out;
+  }
+
+  function flankArcLength(fn, uEnd) {
+    const M = 100;
+    let L = 0,
+      prev = fn(0);
+    for (let i = 1; i <= M; i++) {
+      const q = fn((uEnd * i) / M);
+      L += Math.hypot(q.x - prev.x, q.y - prev.y);
+      prev = q;
+    }
+    return L;
+  }
+
+  /** Tangent fillet of radius rf where a flank (running pitch -> root, so
+   * u=1 is deepest) meets the flat root land at y=-hd. Returns the fillet
+   * centre and the flank parameter u at the tangency point, found by
+   * bisecting for the u whose offset-by-rf point (toward the void) sits at
+   * height -hd+rf. */
+  function fitRootFillet(hd, flankFn, rf) {
+    if (!(rf > 0)) return null;
+    const target = -hd + rf;
+    const h = 1e-5;
+    function centreAt(u) {
+      const q = flankFn(u);
+      const a = flankFn(Math.max(0, u - h)),
+        b = flankFn(Math.min(1, u + h));
+      const tx = b.x - a.x,
+        ty = b.y - a.y;
+      const L = Math.hypot(tx, ty) || 1;
+      const nx = -ty / L,
+        ny = tx / L; // normal toward the void
+      return { x: q.x + rf * nx, y: q.y + rf * ny, px: q.x, py: q.y };
+    }
+    if (centreAt(0).y < target || centreAt(1).y > target) return null;
+    let lo = 0,
+      hi = 1;
+    for (let i = 0; i < 80; i++) {
+      const mid = 0.5 * (lo + hi);
+      if (centreAt(mid).y > target) lo = mid;
+      else hi = mid;
+    }
+    const u = 0.5 * (lo + hi);
+    const c = centreAt(u);
+    return { cx: c.x, cy: target, r: rf, u, px: c.px, py: c.py };
+  }
+
+  const geomCache = new Map();
+
+  /** Solve the tooth's fixed shape (flank functions + root fillet) once per
+   * distinct parameter set — the fillet fit is a nested bisection too
+   * expensive to redo per sample call. */
+  function toothGeometry(d) {
+    const key = [d.m, d.ha, d.hd, d.rootFillet, d.tE, d.s0].join("|");
+    if (geomCache.has(key)) return geomCache.get(key);
+
+    const addFn = addendumFlank(d);
+    const dedFn = dedendumFlank(addFn, d.s0);
+    const hdEff = Math.min(d.hd, d.ha); // point-symmetric dedendum can't exceed ha
+    const atFullDepth = hdEff > d.ha - 1e-9;
+    const rf = atFullDepth ? 0 : Math.min(d.rootFillet, hdEff * 0.45);
+    const fil = rf > 0 ? fitRootFillet(hdEff, dedFn, rf) : null;
+
+    const g = { addFn, dedFn, hdEff, fil };
+    if (geomCache.size > 128) geomCache.clear();
+    geomCache.set(key, g);
+    return g;
+  }
+
+  /** Radius of curvature of the addendum flank at its crest (u=1) — the
+   * cycloid's crest is the flat end of Eq. (11) and is naturally round
+   * rather than an input, unlike a capped profile. */
+  function crestRadius(addFn) {
+    const h = 1e-4;
+    const p0 = addFn(1 - 2 * h),
+      p1 = addFn(1 - h),
+      p2 = addFn(1);
+    const x1 = (p2.x - p0.x) / (2 * h),
+      y1 = (p2.y - p0.y) / (2 * h);
+    const x2 = (p2.x - 2 * p1.x + p0.x) / (h * h),
+      y2 = (p2.y - 2 * p1.y + p0.y) / (h * h);
+    const k = Math.abs(x1 * y2 - y1 * x2);
+    return k > 1e-12 ? Math.pow(x1 * x1 + y1 * y1, 1.5) / k : Infinity;
+  }
+
+  /** One full tooth polyline, right-half mirrored to the left, in local
+   * tooth coordinates (x tangential from the tooth axis, y radial from the
+   * pitch line). `inflate` offsets the whole curve outward along its normal
+   * (used to cut clearance into the conjugate spline slot). */
+  function toothProfile(d, inflate, samplesPerFlank) {
+    const n = Math.max(6, samplesPerFlank || 24);
+    const g = toothGeometry(d);
+    const { addFn, dedFn, fil, hdEff } = g;
+    const uRoot = fil ? fil.u : 1;
+
+    const Ld = flankArcLength(dedFn, uRoot),
+      La = flankArcLength(addFn, 1);
+    const nd = Math.max(3, Math.round((n * Ld) / (Ld + La)));
+    const na = Math.max(3, n - nd);
+    const ded = resampleByArcLength(dedFn, uRoot, nd);
+    const arcStep = Math.PI / Math.max(8, n / 2);
+
+    const filArc = [];
+    if (fil) {
+      const a0 = Math.atan2(fil.py - fil.cy, fil.px - fil.cx);
+      const a1 = -Math.PI / 2;
+      let da = a1 - a0;
+      while (da > Math.PI) da -= 2 * Math.PI;
+      while (da < -Math.PI) da += 2 * Math.PI;
+      const nf = Math.max(4, Math.ceil(Math.abs(da) / arcStep));
+      for (let i = 1; i <= nf; i++) {
+        const aa = a0 + (da * i) / nf;
+        filArc.push({ x: fil.cx + fil.r * Math.cos(aa), y: fil.cy + fil.r * Math.sin(aa) });
+      }
+    } else {
+      filArc.push(dedFn(uRoot));
+    }
+    const add = resampleByArcLength(addFn, 1, na).slice(1);
+
+    const right = [];
+    for (let i = filArc.length - 1; i >= 0; i--) right.push(filArc[i]);
+    for (let i = ded.length - 1; i >= 0; i--) right.push(ded[i]);
+    for (let i = 0; i < add.length; i++) right.push(add[i]);
+
+    // Left half is the mirror, minus the shared crest point; crest included once.
+    const pts = [];
+    for (let i = 0; i < right.length - 1; i++) pts.push({ x: -right[i].x, y: right[i].y });
+    for (let i = right.length - 1; i >= 0; i--) pts.push({ x: right[i].x, y: right[i].y });
+
+    return inflate ? offsetPolyline(pts, inflate) : pts;
+  }
+
+  function offsetPolyline(pts, dist) {
+    const out = [];
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[Math.max(0, i - 1)];
+      const b = pts[Math.min(pts.length - 1, i + 1)];
+      const dx = b.x - a.x,
+        dy = b.y - a.y;
+      const len = Math.hypot(dx, dy) || 1;
+      out.push({ x: pts[i].x - (dy / len) * dist, y: pts[i].y + (dx / len) * dist });
+    }
+    return out;
+  }
+
+  /** The tooth plus flat root land out to a full half flexspline pitch on
+   * each side — this is what actually sweeps through a spline slot as the
+   * wave generator turns, so the conjugate envelope has to be built from
+   * this, not the bare tooth (otherwise the tooth tip can dig into the
+   * root-land material at the major axis undetected). */
+  function toothWithRootLand(d, inflate, samplesPerFlank) {
+    const tooth = toothProfile(d, inflate, samplesPerFlank);
+    const yRoot = -toothGeometry(d).hdEff + (inflate || 0);
+    const xEnd = d.halfPitch;
+    const xL = tooth[0].x,
+      xR = tooth[tooth.length - 1].x;
+    const nL = 10;
+    const pts = [];
+    if (xL + xEnd > 1e-9) {
+      for (let i = 0; i < nL; i++) pts.push({ x: -xEnd + (xL + xEnd) * (i / nL), y: yRoot });
+    }
+    for (const p of tooth) pts.push(p);
+    if (xEnd - xR > 1e-9) {
+      for (let i = 1; i <= nL; i++) pts.push({ x: xR + (xEnd - xR) * (i / nL), y: yRoot });
     }
     return pts;
   }
 
+  // ---------------------------------------------------------------------
+  // Full-gear profile assembly
+  // ---------------------------------------------------------------------
+
+  /** Full undeformed (as-manufactured) flexspline outer profile: every
+   * tooth plus the root land between them, one continuous closed CCW loop
+   * in global mm coordinates, using the polar placement convention
+   * (radius rp+y, angle theta + x/(rp+y)). */
+  function flexsplineProfile(d, zf, samplesPerFlank) {
+    const tooth = toothProfile(d, 0, samplesPerFlank || 48);
+    const g = toothGeometry(d);
+    const rootR = d.rp - g.hdEff;
+    const pitchAngle = (2 * Math.PI) / zf;
+    const outer = [];
+    for (let k = 0; k < zf; k++) {
+      const theta0 = k * pitchAngle;
+      for (const pt of tooth) {
+        const ang = theta0 + pt.x / d.rp;
+        const r = d.rp + pt.y;
+        outer.push({ x: r * Math.cos(ang), y: r * Math.sin(ang) });
+      }
+      const a0 = theta0 + tooth[tooth.length - 1].x / d.rp;
+      const a1 = theta0 + pitchAngle + tooth[0].x / d.rp;
+      const arcN = 10;
+      if ((a1 - a0) * rootR > 1e-9) {
+        for (let i = 1; i < arcN; i++) {
+          const aa = a0 + (a1 - a0) * (i / arcN);
+          outer.push({ x: rootR * Math.cos(aa), y: rootR * Math.sin(aa) });
+        }
+      }
+    }
+    return { outer, rootRadius: rootR, tipRadius: d.rp + d.ha };
+  }
+
+  /** Accumulate a Cartesian-interpolated (angle, radius) line segment into a
+   * max-radius-per-angular-bin envelope. Anything crossing outside the
+   * pitch window [-halfPitch, halfPitch] is periodic with this same slot, so
+   * it is re-added shifted by whole pitches rather than discarded. */
+  function rasterizeSegment(env, nBins, halfPitch, a0, r0, a1, r1) {
+    if (a0 > a1) {
+      [a0, a1] = [a1, a0];
+      [r0, r1] = [r1, r0];
+    }
+    const pitch = 2 * halfPitch;
+    const kLo = Math.floor((-halfPitch - a1) / pitch);
+    const kHi = Math.ceil((halfPitch - a0) / pitch);
+    for (let k = kLo; k <= kHi; k++) {
+      rasterizeCore(env, nBins, halfPitch, a0 + k * pitch, r0, a1 + k * pitch, r1);
+    }
+  }
+
+  function rasterizeCore(env, nBins, halfPitch, a0, r0, a1, r1) {
+    if (a1 < -halfPitch || a0 > halfPitch) return;
+    const binW = (2 * halfPitch) / nBins;
+    const b0 = Math.max(0, Math.floor((a0 + halfPitch) / binW));
+    const b1 = Math.min(nBins - 1, Math.floor((a1 + halfPitch) / binW));
+    for (let b = b0; b <= b1; b++) {
+      const ac = -halfPitch + (b + 0.5) * binW;
+      let r;
+      if (a1 - a0 < 1e-12) r = Math.max(r0, r1);
+      else {
+        const f = Math.max(0, Math.min(1, (ac - a0) / (a1 - a0)));
+        r = r0 + f * (r1 - r0);
+      }
+      if (r > env[b]) env[b] = r;
+    }
+  }
+
   /**
-   * Build one full tooth outline (local frame) as an ordered point list:
-   * root(left) -> pitch(left) -> tip -> pitch(right) -> root(right).
-   * For CS these are already-global-style (x,y) with y~radius; for FS these
-   * are local (x1,y1) small-offset coords to be placed with placeLocalOnPitch.
+   * The conjugate tooth-space envelope for a rigid spline with zs teeth
+   * (Eq. 14-15's envelope, computed numerically): sweep the flexspline
+   * tooth (with its root land) through one full wave-generator engagement
+   * and record, per angular bin within one spline pitch, the MAXIMUM radius
+   * the flexspline material ever reaches there. That maximum-radius curve
+   * is exactly the boundary the rigid spline tooth space must clear to
+   * never interfere while remaining "fully conjugate" (touching, not
+   * gapping, wherever the flexspline actually sweeps).
    */
-  function buildToothOutline(kind, p, nSeg) {
-    const addFn = kind === "cs" ? csAddendumPoint : fsAddendumPoint;
-    const dedFn = kind === "cs" ? csDedendumPoint : fsDedendumPoint;
+  function conjugateSlot(d, zs, zf, clearance, nBins) {
+    nBins = nBins || 256;
+    const pitch = (2 * Math.PI) / zs;
+    const halfPitch = pitch / 2;
+    const dz = zs - zf; // 0 would be a degenerate same-count case; CS always has dz>0 here
+    const tooth = toothWithRootLand(d, clearance, 28);
+    const env = new Float64Array(nBins);
 
-    const dedRight = sampleFlank(dedFn, p, nSeg); // index 0=pitch ... last=root, x>=0
-    const addRight = sampleFlank(addFn, p, nSeg); // index 0=pitch ... last=tip, x>=0
+    const steps = 500;
+    const phiMax = Math.PI / 2 / (1 + dz / zf);
+    for (let s = 0; s <= steps; s++) {
+      const phi = -phiMax + (2 * phiMax * s) / steps;
+      const thetaBody = (-phi * dz) / zf; // gear-ratio drift of the FS body
+      const psi = thetaBody - phi; // angle from the WG major axis
+      const def = waveDeform(d, psi);
+      const theta = thetaBody + def.v / d.rm;
+      const R = def.rho;
+      const cosM = Math.cos(def.mu),
+        sinM = Math.sin(def.mu);
 
-    const rootRight = dedRight[dedRight.length - 1];
-    const tip = addRight[addRight.length - 1];
+      let prevA = null,
+        prevR = null;
+      for (const pt of tooth) {
+        const sec = rotateIntoSection(pt.x, pt.y, cosM, sinM);
+        const pl = polarPlace(R, theta, sec.t, sec.r);
+        if (prevA !== null) rasterizeSegment(env, nBins, halfPitch, prevA, prevR, pl.ang, pl.rad);
+        prevA = pl.ang;
+        prevR = pl.rad;
+      }
+    }
 
-    const outline = [];
-    // 1) root(left) -> pitch(left): dedRight mirrored, traversed root->pitch (i: last->0)
-    for (let i = dedRight.length - 1; i >= 0; i--) {
-      outline.push({ x: -dedRight[i].x, y: dedRight[i].y });
+    // The kinematics are symmetric about the major axis; enforce it exactly.
+    for (let j = 0; j < nBins / 2; j++) {
+      const mj = nBins - 1 - j;
+      const mx = Math.max(env[j], env[mj]);
+      env[j] = mx;
+      env[mj] = mx;
     }
-    // 2) pitch(left) -> tip(left): addRight mirrored, traversed pitch->tip (i: 1->last)
-    for (let i = 1; i < addRight.length; i++) {
-      outline.push({ x: -addRight[i].x, y: addRight[i].y });
+
+    // Floor: angular bins the flexspline never sweeps (near the minor axis)
+    // must still clear the flexspline tip there. Blended with a smooth max
+    // so the crest meets the swept flanks without a sharp cusp; the blend
+    // only ever adds clearance, never removes any.
+    const rFloor = waveDeform(d, Math.PI / 2).rho + d.ha + clearance;
+    const blend = Math.max(clearance, 0.02 * d.m);
+    for (let k = 0; k < nBins; k++) {
+      const e = env[k] - rFloor;
+      env[k] = rFloor + 0.5 * (e + Math.sqrt(e * e + blend * blend));
     }
-    // 3) tip(right) -> pitch(right): addRight unmirrored, traversed tip->pitch (i: last->0)
-    for (let i = addRight.length - 1; i >= 0; i--) {
-      outline.push(addRight[i]);
+
+    return { radii: env, halfPitch, nBins };
+  }
+
+  /** Full internal-spline profile (one continuous closed loop, all zs teeth
+   * spaces), built from the conjugate envelope. */
+  function splineProfile(d, zs, zf, wall, clearance) {
+    const slot = conjugateSlot(d, zs, zf, clearance);
+    const inner = [];
+    let maxR = 0;
+    const pitch = (2 * Math.PI) / zs;
+    for (let k = 0; k < zs; k++) {
+      const base = k * pitch;
+      for (let b = 0; b < slot.nBins; b++) {
+        const ang = base - slot.halfPitch + (b + 0.5) * ((2 * slot.halfPitch) / slot.nBins);
+        const r = slot.radii[b];
+        if (r > maxR) maxR = r;
+        inner.push({ x: r * Math.cos(ang), y: r * Math.sin(ang) });
+      }
     }
-    // 4) pitch(right) -> root(right): dedRight unmirrored, traversed pitch->root (i: 1->last)
-    for (let i = 1; i < dedRight.length; i++) {
-      outline.push(dedRight[i]);
-    }
-    return { outline, rootRight, tip };
+    return { inner, outerRadius: maxR + wall, slotBottomRadius: maxR };
   }
 
   // ---------------------------------------------------------------------
-  // Full ring point generation (for SVG / DXF)
+  // Wave generator cam (for the 3D solid, unchanged model from rev 1)
   // ---------------------------------------------------------------------
 
-  function buildCSRingTeethPoints(p, nSeg, baseAngle) {
-    const { outline } = buildToothOutline("cs", p, nSeg);
-    const allTeeth = [];
-    for (let k = 0; k < p.z2; k++) {
-      allTeeth.push(outline.map((pt) => placeGlobal(pt.x, pt.y, k, p.z2, baseAngle)));
-    }
-    return allTeeth;
-  }
-
-  function buildFSRingTeethPoints(p, nSeg, baseAngle) {
-    const { outline } = buildToothOutline("fs", p, nSeg);
-    const allTeeth = [];
-    for (let k = 0; k < p.z1; k++) {
-      allTeeth.push(
-        outline.map((pt) => placeLocalOnPitch(pt.x, pt.y, p.R1, k, p.z1, baseAngle))
-      );
-    }
-    return allTeeth;
-  }
-
-  function buildWaveGeneratorCam(p, nSeg) {
+  function waveGeneratorCam(d, nSeg) {
     nSeg = nSeg || 240;
     const pts = [];
     for (let i = 0; i <= nSeg; i++) {
       const phi = (2 * Math.PI * i) / nSeg;
-      const r = rho(phi, p.rhoA, p.rhoB) - p.wallFS / 2;
+      const def = waveDeform(d, phi);
+      const r = def.rho - d.wallFlex / 2;
       pts.push({ x: r * Math.sin(phi), y: r * Math.cos(phi) });
     }
     return pts;
   }
 
-  function circlePoints(r, nSeg) {
+  function circlePoints(r, cx, cy, nSeg) {
+    cx = cx || 0;
+    cy = cy || 0;
     nSeg = nSeg || 180;
     const pts = [];
     for (let i = 0; i <= nSeg; i++) {
       const a = (2 * Math.PI * i) / nSeg;
-      pts.push({ x: r * Math.sin(a), y: r * Math.cos(a) });
+      pts.push({ x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) });
     }
     return pts;
+  }
+
+  // ---------------------------------------------------------------------
+  // Backlash measurement
+  // ---------------------------------------------------------------------
+
+  /** Geometric backlash (mm, at the pitch radius) for the fully-engaged
+   * tooth at the major axis: hold the wave generator fixed and find the
+   * angular span the rigid spline can rotate through before either flank of
+   * that tooth contacts the slot envelope. */
+  function measureBacklash(d, zs, zf, clearance) {
+    const slot = conjugateSlot(d, zs, zf, clearance, 1024);
+    const env = slot.radii,
+      nBins = slot.nBins;
+    const hp = slot.halfPitch,
+      binW = (2 * hp) / nBins,
+      csPitch = 2 * hp;
+    const tooth = toothProfile(d, 0, 28);
+
+    function envAt(ang) {
+      const f = (ang + hp) / binW - 0.5;
+      const i0 = Math.floor(f),
+        t = f - i0;
+      const lo = i0 < 0 ? 0 : i0 >= nBins ? nBins - 1 : i0;
+      const hi = i0 + 1 < 0 ? 0 : i0 + 1 >= nBins ? nBins - 1 : i0 + 1;
+      return env[lo] + (env[hi] - env[lo]) * t;
+    }
+
+    const def = waveDeform(d, 0),
+      R = def.rho;
+    const cosM = Math.cos(def.mu),
+      sinM = Math.sin(def.mu);
+    const ang = [],
+      rad = [];
+    for (const pt of tooth) {
+      const sec = rotateIntoSection(pt.x, pt.y, cosM, sinM);
+      const pl = polarPlace(R, 0, sec.t, sec.r);
+      ang.push(pl.ang);
+      rad.push(pl.rad);
+    }
+
+    function minGap(phi) {
+      let g = Infinity;
+      for (let j = 0; j < ang.length; j++) {
+        let m = (ang[j] - phi) % csPitch;
+        if (m > hp) m -= csPitch;
+        else if (m < -hp) m += csPitch;
+        const gg = envAt(m) - rad[j];
+        if (gg < g) g = gg;
+      }
+      return g;
+    }
+
+    const nScan = 160,
+      dphi = (2 * hp) / nScan;
+    let best = -Infinity,
+      bestI = 0;
+    const gs = new Float64Array(nScan + 1);
+    for (let s = 0; s <= nScan; s++) {
+      gs[s] = minGap(-hp + s * dphi);
+      if (gs[s] > best) {
+        best = gs[s];
+        bestI = s;
+      }
+    }
+    if (best <= 0) return 0;
+
+    function wall(dir) {
+      let s2 = bestI;
+      while (s2 + dir >= 0 && s2 + dir <= nScan && gs[s2 + dir] > 0) s2 += dir;
+      let inPhi = -hp + s2 * dphi;
+      const outPhi = inPhi + dir * dphi;
+      if (s2 + dir < 0 || s2 + dir > nScan) return inPhi;
+      let lo = inPhi,
+        hi = outPhi;
+      for (let it = 0; it < 22; it++) {
+        const mid = 0.5 * (lo + hi);
+        if (minGap(mid) > 0) lo = mid;
+        else hi = mid;
+      }
+      return lo;
+    }
+    return (wall(1) - wall(-1)) * d.rp;
+  }
+
+  // ---------------------------------------------------------------------
+  // Top-level API
+  // ---------------------------------------------------------------------
+
+  function generate(input) {
+    const d = deriveGeometry(input);
+    const flex = flexsplineProfile(d, d.zf);
+    const circ = splineProfile(d, d.zc, d.zf, d.wallCirc, d.clearance);
+    return { d, flex, circ };
+  }
+
+  function computeMetrics(input, gen) {
+    const d = gen ? gen.d : deriveGeometry(input);
+    const parts = gen || generate(input);
+    const pitchDia = d.m * d.zf;
+    const outerDia = 2 * parts.circ.outerRadius;
+    const ratio = Math.abs(d.zf / (d.zc - d.zf));
+
+    const psiC = 0.5 * Math.acos(0.9); // angle where w(psi) = 0.9*w0
+    const teethMesh = Math.round((d.zf * (2 * psiC)) / Math.PI);
+
+    const backlash = measureBacklash(d, d.zc, d.zf, d.clearance);
+    const fsStrainPct = ((d.wallFlex / 2) * (3 * d.w0)) / (d.rm * d.rm) * 100;
+
+    const g = toothGeometry(d);
+    const tipR = crestRadius(g.addFn);
+    const tp = toothProfile(d, 0, 28);
+    const rootLand = Math.max(0, 2 * d.halfPitch - (tp[tp.length - 1].x - tp[0].x));
+
+    return {
+      ratio,
+      pitchDia,
+      outerDia,
+      w0: d.w0,
+      deflPct: (d.w0 / d.rm) * 100,
+      teethMesh,
+      teethPct: (100 * teethMesh) / d.zf,
+      backlash,
+      fsStrainPct,
+      toothHeight: d.ha + d.hd,
+      tipRadius: tipR,
+      toothThicknessMm: 2 * d.s0,
+      circularPitch: 2 * d.halfPitch,
+      rootLand,
+      toothAngleDeg: (d.alpha0 * 180) / Math.PI,
+      stroke: d.stroke,
+      strokeMargin: d.strokeMargin,
+    };
   }
 
   // ---------------------------------------------------------------------
@@ -406,24 +758,19 @@
 
   const HDMath = {
     DEFAULTS,
-    simpson,
-    rho,
-    drho,
-    solveRhoB,
-    neutralLineArcLength,
-    dCycloid,
-    deriveHDParams,
-    csAddendumPoint,
-    csDedendumPoint,
-    fsAddendumPoint,
-    fsDedendumPoint,
-    placeLocalOnPitch,
-    placeGlobal,
-    buildToothOutline,
-    buildCSRingTeethPoints,
-    buildFSRingTeethPoints,
-    buildWaveGeneratorCam,
+    deriveGeometry,
+    waveDeform,
+    toothProfile,
+    toothWithRootLand,
+    flexsplineProfile,
+    conjugateSlot,
+    splineProfile,
+    measureBacklash,
+    generate,
+    computeMetrics,
+    waveGeneratorCam,
     circlePoints,
+    maxToothAngle,
   };
 
   if (typeof module !== "undefined" && module.exports) {

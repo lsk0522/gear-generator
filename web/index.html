@@ -17,21 +17,25 @@
   <aside class="sidebar">
     <h1>하모닉 드라이브 생성기<span class="pill">CTP</span></h1>
     <p class="subtitle">
-      모듈 · 외경 · 내경만 입력하면 사이클로이드 치형 하모닉 드라이브
-      (서큘러스플라인 + 플렉스스플라인 + 웨이브제너레이터 캠)를 즉시 계산합니다.
+      사이클로이드 치형 하모닉 드라이브(서큘러스플라인 + 플렉스스플라인 +
+      웨이브제너레이터 캠)를 실제 envelope 방식 공액 치형 계산으로 생성합니다.
     </p>
 
     <div class="field">
-      <label>모듈 (m) <span class="unit">mm</span></label>
-      <input id="in-m" type="number" step="0.05" min="0.05" value="1.0" />
+      <label>모듈 <span class="unit">mm</span></label>
+      <input id="in-module" type="number" step="0.05" min="0.05" value="1.25" />
     </div>
     <div class="field">
-      <label>외경 (서큘러스플라인 OD) <span class="unit">mm</span></label>
-      <input id="in-od" type="number" step="0.5" min="1" value="120" />
+      <label>플렉스스플라인 잇수 (zf)</label>
+      <input id="in-zf" type="number" step="1" min="20" value="100" />
     </div>
     <div class="field">
-      <label>내경 (플렉스스플라인 보어 ID) <span class="unit">mm</span></label>
-      <input id="in-id" type="number" step="0.5" min="1" value="109" />
+      <label>서큘러스플라인 잇수 (zc)</label>
+      <input id="in-zc" type="number" step="1" min="21" value="102" />
+    </div>
+    <div class="field">
+      <label>감속비 (1 : i) <span class="unit">= zf 로 자동 환산</span></label>
+      <input id="in-ratio" type="number" step="1" min="1" value="50" />
     </div>
 
     <details class="advanced">
@@ -42,20 +46,36 @@
           <input id="in-ha" type="number" step="0.05" value="1.0" />
         </div>
         <div class="field">
-          <label>이뿌리 높이 계수 hf*</label>
-          <input id="in-hf" type="number" step="0.05" value="1.25" />
+          <label>이뿌리 깊이 계수 hd*</label>
+          <input id="in-hd" type="number" step="0.05" value="1.0" />
         </div>
         <div class="field">
           <label>최대 반경변형 계수 w0*</label>
           <input id="in-w0" type="number" step="0.05" value="1.0" />
         </div>
         <div class="field">
-          <label>CS 림 두께 (×m)</label>
-          <input id="in-csrim" type="number" step="0.5" value="3.0" />
+          <label>이빨각 α0 <span class="unit">deg</span></label>
+          <input id="in-toothangle" type="number" step="0.1" min="0" value="9.17" />
         </div>
         <div class="field">
-          <label>잇수차 (z2−z1)</label>
-          <input id="in-toothdiff" type="number" step="1" min="2" value="2" />
+          <label>이 두께 비율 (원주피치 대비)</label>
+          <input id="in-toothick" type="number" step="0.01" min="0.01" max="0.5" value="0.5" />
+        </div>
+        <div class="field">
+          <label>이뿌리 필렛 (×m)</label>
+          <input id="in-rootfillet" type="number" step="0.01" min="0" value="0.15" />
+        </div>
+        <div class="field">
+          <label>백래시 공차 (×m)</label>
+          <input id="in-clearance" type="number" step="0.01" value="0.05" />
+        </div>
+        <div class="field">
+          <label>FS 벽 두께 <span class="unit">mm</span></label>
+          <input id="in-wallflex" type="number" step="0.05" min="0.05" value="0.75" />
+        </div>
+        <div class="field">
+          <label>CS 벽 두께 <span class="unit">mm</span></label>
+          <input id="in-wallcirc" type="number" step="0.5" min="0.5" value="3.0" />
         </div>
       </div>
     </details>
@@ -71,6 +91,11 @@
       <div id="result-grid" class="result-grid"></div>
     </div>
 
+    <div class="results">
+      <h2>성능 지표 (1차 추정)</h2>
+      <div id="metric-grid" class="result-grid"></div>
+    </div>
+
     <div class="downloads">
       <button id="dl-cs" class="dl"><span class="swatch" style="background:var(--cs-stroke)"></span>서큘러스플라인 DXF</button>
       <button id="dl-fs" class="dl"><span class="swatch" style="background:var(--fs-stroke)"></span>플렉스스플라인 DXF</button>
@@ -81,11 +106,12 @@
     <div class="footer-note">
       Yao et al., <em>"A Novel Cycloid Tooth Profile for Harmonic Drive with
       Fully Conjugate Features"</em>, Actuators 2025, 14(4), 187 의 사이클로이드
-      치형 구성식(Eq. 9–13)을 기반으로 합니다. 논문의 이뿌리 envelope 정밀보정
-      (Sec. 3.2–3.4)은 단순화하여 여유 있는 필렛으로 대체했습니다 — 이뿌리는
-      접촉면이 아니므로 치형 성능에는 영향이 없습니다. 생성된 형상은 개념 검증용
-      기하 데이터이며, 실제 제작 전 반드시 강도/탄성/공차 검증이 필요합니다.
-      Fusion 360 애드인: <code>fusion360_addin/HarmonicDriveGenerator</code>.
+      치형(Eq. 9–13)과 이빨각 α0 절단(Sec. 3.3)을 그대로 구현하고,
+      서큘러스플라인 치형은 실제 수치 envelope(Eq. 14–15, 파형발생기 한 바퀴
+      스윕에 대한 최대반경 래스터화)로 계산합니다 — 근사식이 아닙니다.
+      백래시·변형률·맞물림 개수는 1차 기하학적 추정치입니다. 생성된 형상은
+      개념 검증용 기하 데이터이며, 실제 제작 전 반드시 강도/탄성/공차 검증이
+      필요합니다. Fusion 360 애드인: <code>fusion360_addin/HarmonicDriveGenerator</code>.
     </div>
   </aside>
 

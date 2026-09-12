@@ -1,18 +1,18 @@
 """
 Fusion 360 command: generate a 3-part harmonic drive (circular spline,
-flexspline, wave-generator cam) from just module / outer diameter / inner
-diameter, using the cycloid tooth profile math in hd_math.py.
+flexspline, wave-generator cam) using the rev-2 cycloid tooth profile math
+in hd_math.py (real numerical envelope, alpha0-truncated cycloid, tangent
+root fillet — see that file's module docstring).
 
 Simplifications (documented, not hidden):
   - The flexspline is generated as a toothed ring of constant face width,
-    not the full cup (diaphragm + boss). Adding the cup shape is a
-    reasonable follow-up (revolve + shell), but is out of scope here.
+    not the full cup (diaphragm + boss).
   - The wave-generator is a plain elliptical cam solid (no separate ball
     bearing race).
-  - Root (dedendum) fillets are a simple clearance-safe cycloidal fillet,
-    not the paper's full envelope-refined dedendum (see hd_math.py).
-  - Face widths (CS/FS/WG thickness) are auto-derived from module/OD, not
-    user input - see hd_math.derive_hd_params().
+  - Detail (samples-per-flank / envelope bins / sweep steps) defaults are
+    much coarser here than the web preview uses, because each point becomes
+    an individual Fusion API call (SketchLines.addByTwoPoints) and that is
+    the dominant cost of generation - see build_circular_spline's docstring.
 """
 import math
 import traceback
@@ -44,7 +44,7 @@ class GenerateCommand:
             cmd_def = self.ui.commandDefinitions.addButtonDefinition(
                 CMD_ID,
                 "하모닉 드라이브 생성",
-                "모듈 / 외경 / 내경으로 사이클로이드 치형 하모닉 드라이브\n"
+                "사이클로이드 치형 하모닉 드라이브\n"
                 "(서큘러스플라인 + 플렉스스플라인 + 웨이브제너레이터 캠)를 생성합니다.",
             )
         on_created = CommandCreatedHandler(self)
@@ -73,54 +73,58 @@ class GenerateCommand:
 # ---------------------------------------------------------------------
 
 
-def _read_params(inputs):
-    """Read every command input and derive the full HD parameter set.
+def _read_geometry(inputs):
+    """Read every shape-defining command input and derive the HD geometry.
     Returns None if the current values aren't usable yet (still typing)."""
     try:
-        m_ = inputs.itemById("m").value / MM_TO_CM
-        od_ = inputs.itemById("od").value / MM_TO_CM
-        id_ = inputs.itemById("id").value / MM_TO_CM
-        if m_ <= 0 or od_ <= 0 or id_ <= 0:
+        b = inputs.itemById("basic").children
+        m_ = b.itemById("module").value / MM_TO_CM
+        zf = int(round(b.itemById("zf").value))
+        zc = int(round(b.itemById("zc").value))
+        if m_ <= 0 or zf <= 0 or zc <= 0:
             return None
 
-        adv = inputs.itemById("advanced").children
-        ha = adv.itemById("ha").value
-        hf = adv.itemById("hf").value
-        w0 = adv.itemById("w0").value
-        csrim_mult = adv.itemById("csrim").value
-        tooth_diff = adv.itemById("toothdiff").value
-
-        p = hd_math.derive_hd_params(
-            m_, od_, id_,
-            ha_star=ha, hf_star=hf, w0_star=w0,
-            cs_rim=csrim_mult * m_, tooth_diff=int(tooth_diff),
+        a = inputs.itemById("advanced").children
+        return hd_math.derive_geometry(
+            module=m_, zf=zf, zc=zc,
+            w0_ratio=a.itemById("w0").value,
+            ha=a.itemById("ha").value,
+            hd=a.itemById("hd").value,
+            tooth_angle=a.itemById("toothangle").value,
+            tooth_thickness=a.itemById("toothick").value,
+            root_fillet=a.itemById("rootfillet").value,
+            clearance=a.itemById("clearance").value,
+            wall_flex=b.itemById("wallflex").value / MM_TO_CM,
+            wall_circ=b.itemById("wallcirc").value / MM_TO_CM,
         )
-        return p
     except Exception:
         return None
 
 
-def _summary_text(p):
-    if p is None:
-        return "값을 입력해주세요 (모듈 > 0, 외경 > 내경 > 0)."
+def _summary_text(d):
+    if d is None:
+        return "값을 입력해주세요 (모듈 > 0, zf/zc > 0)."
 
-    lines = []
-    lines.append("감속비          1 : %.2f" % p["ratio"])
-    lines.append("FS 잇수 (z1)     %d" % p["z1"])
-    lines.append("CS 잇수 (z2)     %d" % p["z2"])
-    lines.append("")
-    lines.append("FS 피치/이끝/이뿌리   %.2f / %.2f / %.2f mm" % (p["R1"], p["Ra1"], p["Rf1"]))
-    lines.append("CS 피치/이끝/이뿌리   %.2f / %.2f / %.2f mm" % (p["R2"], p["Ra2"], p["Rf2"]))
-    lines.append("FS 벽 두께        %.3f mm" % p["wallFS"])
-    lines.append("WG 장축/단축      %.3f / %.3f mm" % (p["rhoA"], p["rhoB"]))
-    lines.append("")
-    lines.append("CS/FS/WG 폭(자동)   %.1f / %.1f / %.1f mm" % (p["csWidth"], p["fsWidth"], p["wgWidth"]))
-
-    if p["warnings"]:
+    dz = d["zc"] - d["zf"]
+    ratio = d["zf"] / dz if dz else float("inf")
+    lines = [
+        "감속비           1 : %.2f" % ratio,
+        "피치 반경 (rp)      %.3f mm" % d["rp"],
+        "WG 장축/단축 (a/b)   %.3f / %.3f mm" % (d["a"], d["b"]),
+        "이빨각 α0 (적용값)    %.2f°" % (d["alpha0"] * 180 / math.pi),
+        "",
+        "FS 이끝/이뿌리 높이   %.3f / %.3f mm" % (d["ha"], d["hd"]),
+        "이뿌리 필렛         %.3f mm" % d["rootFillet"],
+        "백래시 공차         %.3f mm" % d["clearance"],
+        "FS 벽 / CS 벽 두께   %.2f / %.2f mm" % (d["wallFlex"], d["wallCirc"]),
+        "",
+        "스트로크 여유        %.1f µm" % (d["strokeMargin"] * 1000),
+    ]
+    if d["warnings"]:
         lines.append("")
-        for w in p["warnings"]:
+        for w in d["warnings"]:
             lines.append("⚠ " + w)
-    if not p["feasible"]:
+    if not d["feasible"]:
         lines.append("")
         lines.append("✕ 이 조합은 생성할 수 없습니다.")
     return "\n".join(lines)
@@ -139,19 +143,27 @@ class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             basic = inputs.addGroupCommandInput("basic", "기본 치수")
             basic.isExpanded = True
             b = basic.children
-            b.addValueInput("m", "모듈 (Module)", "mm", adsk.core.ValueInput.createByString("1.0 mm"))
-            b.addValueInput("od", "외경 (CS Outer Diameter)", "mm", adsk.core.ValueInput.createByString("120 mm"))
-            b.addValueInput("id", "내경 (FS Bore Diameter)", "mm", adsk.core.ValueInput.createByString("109 mm"))
+            b.addValueInput("module", "모듈 (Module)", "mm", adsk.core.ValueInput.createByString("1.25 mm"))
+            b.addIntegerSpinnerCommandInput("zf", "플렉스스플라인 잇수 (zf)", 20, 400, 1, 100)
+            b.addIntegerSpinnerCommandInput("zc", "서큘러스플라인 잇수 (zc)", 21, 402, 1, 102)
+            b.addValueInput("wallflex", "FS 벽 두께", "mm", adsk.core.ValueInput.createByString("0.75 mm"))
+            b.addValueInput("wallcirc", "CS 벽 두께", "mm", adsk.core.ValueInput.createByString("3.0 mm"))
+            b.addValueInput("cswidth", "CS 폭 (Face Width)", "mm", adsk.core.ValueInput.createByString("15 mm"))
+            b.addValueInput("fswidth", "FS 폭 (Face Width)", "mm", adsk.core.ValueInput.createByString("12 mm"))
+            b.addValueInput("wgwidth", "WG 캠 폭 (Face Width)", "mm", adsk.core.ValueInput.createByString("10 mm"))
 
             adv = inputs.addGroupCommandInput("advanced", "치형 고급 설정")
             adv.isExpanded = False
             a = adv.children
             a.addValueInput("ha", "이끝 높이 계수 ha*", "", adsk.core.ValueInput.createByReal(1.0))
-            a.addValueInput("hf", "이뿌리 높이 계수 hf*", "", adsk.core.ValueInput.createByReal(1.25))
+            a.addValueInput("hd", "이뿌리 깊이 계수 hd*", "", adsk.core.ValueInput.createByReal(1.0))
             a.addValueInput("w0", "최대 반경변형 계수 w0*", "", adsk.core.ValueInput.createByReal(1.0))
-            a.addValueInput("csrim", "CS 림 두께 (x module)", "", adsk.core.ValueInput.createByReal(3.0))
-            a.addIntegerSpinnerCommandInput("toothdiff", "잇수차 (z2-z1)", 2, 6, 2, 2)
-            a.addIntegerSpinnerCommandInput("nseg", "치형 정밀도 (세그먼트/flank)", 4, 40, 1, 10)
+            a.addValueInput("toothangle", "이빨각 α0 (deg)", "", adsk.core.ValueInput.createByReal(9.17))
+            a.addValueInput("toothick", "이 두께 비율 (원주피치 대비)", "", adsk.core.ValueInput.createByReal(0.5))
+            a.addValueInput("rootfillet", "이뿌리 필렛 (x module)", "", adsk.core.ValueInput.createByReal(0.15))
+            a.addValueInput("clearance", "백래시 공차 (x module)", "", adsk.core.ValueInput.createByReal(0.05))
+            a.addIntegerSpinnerCommandInput("spf", "치형 정밀도 (샘플/flank)", 6, 48, 1, 12)
+            a.addIntegerSpinnerCommandInput("nbins", "공액 계산 해상도 (bins)", 24, 256, 1, 48)
 
             opt = inputs.addGroupCommandInput("options", "실용 옵션")
             opt.isExpanded = False
@@ -159,11 +171,13 @@ class CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
             o.addBoolValueInput("csholes", "CS 마운팅 홀 생성", True, "", False)
             o.addIntegerSpinnerCommandInput("csholecount", "CS 홀 개수", 3, 24, 1, 6)
             o.addValueInput("csholedia", "CS 홀 지름", "mm", adsk.core.ValueInput.createByString("5 mm"))
+            o.addValueInput("csholepcd", "CS 홀 PCD 반지름", "mm", adsk.core.ValueInput.createByString("65 mm"))
             o.addBoolValueInput("fsholes", "FS 출력 마운팅 홀 생성", True, "", False)
             o.addIntegerSpinnerCommandInput("fsholecount", "FS 홀 개수", 3, 24, 1, 6)
             o.addValueInput("fsholedia", "FS 홀 지름", "mm", adsk.core.ValueInput.createByString("4 mm"))
+            o.addValueInput("fsholepcd", "FS 홀 PCD 반지름", "mm", adsk.core.ValueInput.createByString("20 mm"))
 
-            inputs.addTextBoxCommandInput("summary", "계산 결과", _summary_text(_read_params(inputs)), 12, True)
+            inputs.addTextBoxCommandInput("summary", "계산 결과", _summary_text(_read_geometry(inputs)), 14, True)
 
             on_execute = ExecuteHandler(self.owner)
             cmd.execute.add(on_execute)
@@ -189,10 +203,10 @@ class InputChangedHandler(adsk.core.InputChangedEventHandler):
     def notify(self, args):
         try:
             inputs = args.inputs
-            p = _read_params(inputs)
+            d = _read_geometry(inputs)
             summary = inputs.itemById("summary")
             if summary:
-                summary.formattedText = _summary_text(p)
+                summary.formattedText = _summary_text(d)
         except Exception:
             pass
 
@@ -203,17 +217,16 @@ class ValidateHandler(adsk.core.ValidateInputsEventHandler):
         self.owner = owner
 
     def notify(self, args):
-        # Only gate on inputs being minimally sane (m>0, od>0, id>0, od>id).
-        # Whether the resulting geometry is "feasible" (wall thickness etc.)
-        # is intentionally NOT required here - that case is handled with a
-        # clear message box in ExecuteHandler instead, because a disabled
-        # OK button gives the user no way to see *why* it's disabled.
+        # Only gate on inputs being minimally sane; infeasible shape
+        # combinations are surfaced with a clear message box in
+        # ExecuteHandler instead of silently disabling OK.
         try:
             inputs = args.firingEvent.sender.commandInputs
-            m_ = inputs.itemById("m").value
-            od_ = inputs.itemById("od").value
-            id_ = inputs.itemById("id").value
-            args.areInputsValid = m_ > 0 and od_ > 0 and id_ > 0 and od_ > id_
+            b = inputs.itemById("basic").children
+            m_ = b.itemById("module").value
+            zf = b.itemById("zf").value
+            zc = b.itemById("zc").value
+            args.areInputsValid = m_ > 0 and zf > 0 and zc > zf
         except Exception:
             args.areInputsValid = False
 
@@ -228,24 +241,33 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
         app = self.owner.app
         try:
             inputs = args.command.commandInputs
-            p = _read_params(inputs)
-            if p is None:
+            d = _read_geometry(inputs)
+            if d is None:
                 ui.messageBox("입력값을 확인해주세요.")
                 return
+
+            b = inputs.itemById("basic").children
+            cs_width = b.itemById("cswidth").value
+            fs_width = b.itemById("fswidth").value
+            wg_width = b.itemById("wgwidth").value
+
+            adv = inputs.itemById("advanced").children
+            spf = int(adv.itemById("spf").value)
+            n_bins = int(adv.itemById("nbins").value)
 
             opt = inputs.itemById("options").children
             cs_holes = opt.itemById("csholes").value
             cs_hole_count = int(opt.itemById("csholecount").value)
-            cs_hole_dia = opt.itemById("csholedia").value  # already cm (Fusion internal unit)
+            cs_hole_dia = opt.itemById("csholedia").value  # cm (Fusion internal unit)
+            cs_hole_pcd = opt.itemById("csholepcd").value
             fs_holes = opt.itemById("fsholes").value
             fs_hole_count = int(opt.itemById("fsholecount").value)
-            fs_hole_dia = opt.itemById("fsholedia").value  # already cm (Fusion internal unit)
+            fs_hole_dia = opt.itemById("fsholedia").value
+            fs_hole_pcd = opt.itemById("fsholepcd").value
 
-            n_seg = int(inputs.itemById("advanced").children.itemById("nseg").value)
-
-            if p["warnings"]:
-                msg = "\n".join(p["warnings"])
-                if not p["feasible"]:
+            if d["warnings"]:
+                msg = "\n".join(d["warnings"])
+                if not d["feasible"]:
                     ui.messageBox("생성 중단:\n" + msg)
                     return
                 else:
@@ -257,36 +279,40 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
             progress = ui.createProgressDialog()
             progress.cancelButtonText = "취소"
             progress.isBackgroundTranslucent = False
-            progress.show(
-                "하모닉 드라이브 생성 중",
-                "서큘러스플라인 생성 중... (%d개 치형)" % p["z2"], 0, 3, 1
-            )
+            progress.show("하모닉 드라이브 생성 중", "공액 치형 계산 중...", 0, 3, 1)
 
-            build_circular_spline(
-                root, p, mm(p["csWidth"]), n_seg,
-                holes=cs_holes, hole_count=cs_hole_count, hole_dia_cm=cs_hole_dia,
-            )
+            flex = hd_math.flexspline_profile(d, d["zf"], samples_per_flank=spf)
             progress.progressValue = 1
-            progress.message = "플렉스스플라인 생성 중... (%d개 치형)" % p["z1"]
+            progress.message = "서큘러스플라인 치형(공액 envelope) 계산 중..."
             if progress.wasCancelled:
                 progress.hide()
                 return
 
-            build_flexspline(
-                root, p, mm(p["fsWidth"]), n_seg,
-                holes=fs_holes, hole_count=fs_hole_count, hole_dia_cm=fs_hole_dia,
-            )
+            circ = hd_math.spline_profile(d, d["zc"], d["zf"], d["wallCirc"], d["clearance"], n_bins=n_bins, steps=max(200, n_bins * 4))
             progress.progressValue = 2
-            progress.message = "웨이브제너레이터 캠 생성 중..."
+            progress.message = "Fusion 지오메트리 생성 중..."
             if progress.wasCancelled:
                 progress.hide()
                 return
 
-            build_wave_generator(root, p, mm(p["wgWidth"]))
+            # cs_width/fs_width/wg_width/*_hole_pcd are read directly from
+            # "mm"-unitType ValueInputs above, so .value is already cm - do
+            # NOT pass them through mm() again (that would be a second,
+            # erroneous x0.1 conversion). Only genuine-millimeter values
+            # computed in Python (hd_math's outputs) go through mm().
+            build_circular_spline(
+                root, d, circ, cs_width,
+                holes=cs_holes, hole_count=cs_hole_count, hole_dia_cm=cs_hole_dia, hole_pcd_cm=cs_hole_pcd,
+            )
+            build_flexspline(
+                root, d, flex, fs_width,
+                holes=fs_holes, hole_count=fs_hole_count, hole_dia_cm=fs_hole_dia, hole_pcd_cm=fs_hole_pcd,
+            )
+            build_wave_generator(root, d, wg_width)
             progress.progressValue = 3
             progress.hide()
 
-            ui.messageBox("생성 완료\n\n" + _summary_text(p))
+            ui.messageBox("생성 완료\n\n" + _summary_text(d))
 
         except Exception:
             if ui:
@@ -298,35 +324,67 @@ class ExecuteHandler(adsk.core.CommandEventHandler):
 # ---------------------------------------------------------------------
 
 
-def _pts3d(pts_mm, z_cm=0.0):
-    coll = adsk.core.ObjectCollection.create()
-    for x, y in pts_mm:
-        coll.add(adsk.core.Point3D.create(mm(x), mm(y), z_cm))
-    return coll
-
-
-def _add_circle(sketch, r_mm):
-    center = adsk.core.Point3D.create(0, 0, 0)
+def _add_circle(sketch, r_mm, cx_mm=0.0, cy_mm=0.0):
+    center = adsk.core.Point3D.create(mm(cx_mm), mm(cy_mm), 0.0)
     return sketch.sketchCurves.sketchCircles.addByCenterRadius(center, mm(r_mm))
 
 
-def _add_closed_polyline(sketch, pts_mm):
+def _add_closed_polyline(sketch, pts_mm, dedup_eps_mm=1e-4):
     """
     Build a closed loop out of straight line segments (SketchLines), not a
-    fitted spline. Fitted splines are dramatically slower to create in bulk
-    via the API (each one runs a curve-fit solve); with a few hundred teeth,
-    that is the difference between seconds and many minutes. Straight
-    segments through the same sample points are visually smooth enough at
-    the segment counts this add-in uses, and are far faster and more
-    predictable for the sketch's profile/region solver too.
+    fitted spline: fitted splines are dramatically slower to create in bulk
+    via the API. Near-duplicate consecutive points (e.g. from a
+    near-zero-width root land at full tooth depth) are dropped first -
+    Fusion can reject or choke on a zero-length line segment.
     """
-    pts = list(pts_mm)
+    pts = []
+    for p in pts_mm:
+        if not pts or (p[0] - pts[-1][0]) ** 2 + (p[1] - pts[-1][1]) ** 2 > dedup_eps_mm ** 2:
+            pts.append(p)
+    if len(pts) > 1 and (pts[0][0] - pts[-1][0]) ** 2 + (pts[0][1] - pts[-1][1]) ** 2 <= dedup_eps_mm ** 2:
+        pts.pop()
     if pts[0] != pts[-1]:
         pts = pts + [pts[0]]
+
     p3d = [adsk.core.Point3D.create(mm(x), mm(y), 0.0) for x, y in pts]
     lines = sketch.sketchCurves.sketchLines
     for i in range(len(p3d) - 1):
         lines.addByTwoPoints(p3d[i], p3d[i + 1])
+
+
+def _extrude_largest_profile(comp, sketch, depth_cm, operation, participant_body=None):
+    """
+    Extrude only the LARGEST-area profile Fusion finds in `sketch`. Each of
+    our sketches here has exactly two closed curves - an outer boundary and
+    an inner one - which Fusion always decomposes into exactly two regions:
+    the annulus between them (what we want) and the small interior disk
+    inside the inner curve (a bore or, for the circular spline, the tooth
+    envelope's own interior) - which is reliably the smaller of the two, so
+    picking the larger profile needs no special-casing per part. Same
+    pattern as the bundled UniversalGearGenerator/CycloidalGearGenerator
+    add-ins' own profile selection.
+    """
+    if sketch.profiles.count == 0:
+        raise RuntimeError("스케치에서 닫힌 프로파일을 찾지 못했습니다: " + sketch.name)
+    best = sketch.profiles.item(0)
+    best_area = best.areaProperties().area
+    for i in range(1, sketch.profiles.count):
+        prof = sketch.profiles.item(i)
+        area = prof.areaProperties().area
+        if area > best_area:
+            best, best_area = prof, area
+
+    extrudes = comp.features.extrudeFeatures
+    ext_input = extrudes.createInput(best, operation)
+    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(depth_cm))
+    if participant_body is not None:
+        try:
+            bodies_coll = adsk.core.ObjectCollection.create()
+            bodies_coll.add(participant_body)
+            ext_input.participantBodies = bodies_coll
+        except Exception:
+            pass  # older API versions: falls back to Fusion's default participant detection
+    return extrudes.add(ext_input)
 
 
 def _extrude_all_profiles(comp, sketch, depth_cm):
@@ -341,11 +399,10 @@ def _extrude_all_profiles(comp, sketch, depth_cm):
 
 def _target_component(root):
     """
-    Prefer a real sub-component (nicer browser tree / lets the user later
-    turn this into a proper multi-body assembly), but some Fusion documents
-    are created as single-component "Part" documents where addNewComponent
-    raises RuntimeError 3. Fall back to building bodies directly in `root`
-    in that case - that always works, regardless of document type.
+    Prefer a real sub-component, but some Fusion documents are created as
+    single-component "Part" documents where addNewComponent raises
+    RuntimeError 3. Fall back to building bodies directly in `root` in that
+    case - that always works, regardless of document type.
     """
     try:
         occ = root.occurrences.addNewComponent(adsk.core.Matrix3D.create())
@@ -355,7 +412,7 @@ def _target_component(root):
 
 
 def _cut_mounting_holes(comp, body, pcd_cm, count, hole_dia_cm, depth_cm, base_angle=0.0):
-    if count <= 0 or hole_dia_cm <= 0:
+    if count <= 0 or hole_dia_cm <= 0 or pcd_cm <= 0:
         return
     sketch = comp.sketches.add(comp.xYConstructionPlane)
     sketch.name = "MountingHoles"
@@ -381,121 +438,60 @@ def _cut_mounting_holes(comp, body, pcd_cm, count, hole_dia_cm, depth_cm, base_a
         bodies_coll.add(body)
         ext_input.participantBodies = bodies_coll
     except Exception:
-        pass  # older API versions: falls back to Fusion's default participant detection
+        pass
     extrudes.add(ext_input)
 
 
-def _extrude_operation_profiles(comp, sketch, depth_cm, operation, participant_body=None):
-    """
-    Extrude EVERY profile found in `sketch` with the given operation. Safe
-    to use with "select everything" ONLY when the sketch is known to
-    contain nothing but same-purpose curves (e.g. a sketch that has only
-    the tooth/notch outlines and nothing else) - see build_circular_spline
-    / build_flexspline for why the sketches are deliberately kept separate.
-    """
-    profiles = adsk.core.ObjectCollection.create()
-    for i in range(sketch.profiles.count):
-        profiles.add(sketch.profiles.item(i))
-    extrudes = comp.features.extrudeFeatures
-    ext_input = extrudes.createInput(profiles, operation)
-    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(depth_cm))
-    if participant_body is not None:
-        try:
-            bodies_coll = adsk.core.ObjectCollection.create()
-            bodies_coll.add(participant_body)
-            ext_input.participantBodies = bodies_coll
-        except Exception:
-            pass  # older API versions: falls back to Fusion's default participant detection
-    return extrudes.add(ext_input)
-
-
-def build_circular_spline(root, p, face_width_cm, n_seg, holes=False, hole_count=6, hole_dia_cm=0.5):
-    """
-    Built in two separate sketches/steps instead of one combined sketch,
-    specifically so Fusion's profile solver never has to be second-guessed:
-      1. outer circle + Ra2 circle -> exactly one clean annulus profile ->
-         extrude as a New Body (a plain untoothed ring).
-      2. a sketch containing ONLY the z2 notch (gap) outlines, nothing
-         else -> each notch is its own unambiguous closed profile (no
-         circles or neighboring curves to confuse the region solver) ->
-         cut all of them out of the ring body at once. What's left
-         standing between the notches are the teeth.
-    (A single combined sketch with everything in it was tried first and
-    reliably produces wrong geometry: Fusion decomposes it into 2*z2+1
-    separate regions - root land x z2, gap x z2, plus the bore - and
-    "select every profile" extrudes the gaps as solid material too.)
-    """
+def build_circular_spline(root, d, circ, face_width_cm, holes=False, hole_count=6, hole_dia_cm=0.5, hole_pcd_cm=0.0):
     comp, is_new = _target_component(root)
     if is_new:
         comp.name = "CircularSpline"
 
-    ring_sketch = comp.sketches.add(comp.xYConstructionPlane)
-    ring_sketch.name = "CS_Ring"
-    _add_circle(ring_sketch, p["csOuterActual"] / 2.0)
-    _add_circle(ring_sketch, p["Ra2"])
-    ring_feature = _extrude_operation_profiles(
-        comp, ring_sketch, face_width_cm, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
-    )
-    body = ring_feature.bodies.item(0) if ring_feature.bodies.count else None
+    sketch = comp.sketches.add(comp.xYConstructionPlane)
+    sketch.name = "CS_Profile"
+    sketch.isComputeDeferred = True
+    try:
+        _add_circle(sketch, circ["outerRadius"])
+        _add_closed_polyline(sketch, circ["inner"])
+    finally:
+        sketch.isComputeDeferred = False
+
+    feature = _extrude_largest_profile(comp, sketch, face_width_cm, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    body = feature.bodies.item(0) if feature.bodies.count else None
     if not is_new and body:
         body.name = "CircularSpline"
 
-    notch_sketch = comp.sketches.add(comp.xYConstructionPlane)
-    notch_sketch.name = "CS_Notches"
-    notch_sketch.isComputeDeferred = True
-    try:
-        for notch in hd_math.build_cs_ring_notches(p, n_seg, 0.0):
-            _add_closed_polyline(notch_sketch, notch)
-    finally:
-        notch_sketch.isComputeDeferred = False
-    _extrude_operation_profiles(
-        comp, notch_sketch, face_width_cm, adsk.fusion.FeatureOperations.CutFeatureOperation, body
-    )
-
     if holes and body:
-        _cut_mounting_holes(comp, body, mm(p["csHolePCD"]), hole_count, hole_dia_cm, face_width_cm)
+        _cut_mounting_holes(comp, body, hole_pcd_cm, hole_count, hole_dia_cm, face_width_cm)
     return comp
 
 
-def build_flexspline(root, p, face_width_cm, n_seg, holes=False, hole_count=6, hole_dia_cm=0.4):
-    """Mirror of build_circular_spline's two-step approach: a plain hub
-    ring (Rf1 to bore) first, then the z1 tooth outlines - each its own
-    unambiguous profile since nothing else shares that sketch - JOINED
-    (not cut) onto the hub, since teeth are solid protrusions here rather
-    than gaps."""
+def build_flexspline(root, d, flex, face_width_cm, holes=False, hole_count=6, hole_dia_cm=0.4, hole_pcd_cm=0.0):
     comp, is_new = _target_component(root)
     if is_new:
         comp.name = "FlexSpline"
 
-    hub_sketch = comp.sketches.add(comp.xYConstructionPlane)
-    hub_sketch.name = "FS_Hub"
-    _add_circle(hub_sketch, p["Rf1"])
-    _add_circle(hub_sketch, p["bore"])
-    hub_feature = _extrude_operation_profiles(
-        comp, hub_sketch, face_width_cm, adsk.fusion.FeatureOperations.NewBodyFeatureOperation
-    )
-    body = hub_feature.bodies.item(0) if hub_feature.bodies.count else None
+    bore_r = flex["rootRadius"] - d["wallFlex"]
+    sketch = comp.sketches.add(comp.xYConstructionPlane)
+    sketch.name = "FS_Profile"
+    sketch.isComputeDeferred = True
+    try:
+        _add_closed_polyline(sketch, flex["outer"])
+        _add_circle(sketch, bore_r)
+    finally:
+        sketch.isComputeDeferred = False
+
+    feature = _extrude_largest_profile(comp, sketch, face_width_cm, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    body = feature.bodies.item(0) if feature.bodies.count else None
     if not is_new and body:
         body.name = "FlexSpline"
 
-    teeth_sketch = comp.sketches.add(comp.xYConstructionPlane)
-    teeth_sketch.name = "FS_Teeth"
-    teeth_sketch.isComputeDeferred = True
-    try:
-        for tooth in hd_math.build_fs_ring_teeth(p, n_seg, 0.0):
-            _add_closed_polyline(teeth_sketch, tooth)
-    finally:
-        teeth_sketch.isComputeDeferred = False
-    _extrude_operation_profiles(
-        comp, teeth_sketch, face_width_cm, adsk.fusion.FeatureOperations.JoinFeatureOperation, body
-    )
-
     if holes and body:
-        _cut_mounting_holes(comp, body, mm(p["fsHolePCD"]), hole_count, hole_dia_cm, face_width_cm)
+        _cut_mounting_holes(comp, body, hole_pcd_cm, hole_count, hole_dia_cm, face_width_cm)
     return comp
 
 
-def build_wave_generator(root, p, width_cm):
+def build_wave_generator(root, d, width_cm):
     comp, is_new = _target_component(root)
     if is_new:
         comp.name = "WaveGenerator"
@@ -504,7 +500,7 @@ def build_wave_generator(root, p, width_cm):
     sketch.name = "WG_Profile"
     sketch.isComputeDeferred = True
     try:
-        cam_pts = hd_math.build_wave_generator_cam(p, 240)
+        cam_pts = hd_math.wave_generator_cam(d, 240)
         _add_closed_polyline(sketch, cam_pts)
     finally:
         sketch.isComputeDeferred = False

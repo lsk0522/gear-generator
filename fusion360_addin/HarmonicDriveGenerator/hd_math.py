@@ -1,70 +1,42 @@
 """
-Harmonic Drive cycloid tooth profile - shared math core (Python port).
+Harmonic Drive cycloid tooth profile - shared math core (rev 2, Python port).
 
-This is a line-for-line port of core-math.js used by the companion website,
-so the Fusion 360 add-in and the web preview always agree. See core-math.js
-for the full derivation notes and the paper reference:
+Line-for-line port of the rewritten web/core-math.js, so the Fusion 360
+add-in and the web preview always agree. See that file for the full
+derivation notes and the paper reference:
 
   Yao, Y.; Lu, L.; Chen, X.; Xie, Y.; Yang, Y.; Xing, J.
   "A Novel Cycloid Tooth Profile for Harmonic Drive with Fully Conjugate
   Features." Actuators 2025, 14(4), 187. https://doi.org/10.3390/act14040187
 
-Units: millimeters, radians.
+Unlike the first revision of this file, the circular-spline tooth space is
+computed as the actual numerical envelope (Eq. 14-15) of the flexspline
+tooth swept through one wave-generator engagement, not a closed-form
+approximation - see conjugate_slot(). Units: millimeters, radians.
 """
 import math
 
 DEFAULTS = {
-    "haStar": 1.0,
-    "hfStar": 1.25,
-    "w0Star": 1.0,
-    "csRimFactor": 3.0,
-    "dedendumXTaper": 0.6,
-    "addendumXTaper": 0.92,
-    "fsToothDiffFactor": 2,
+    "module": 1.25,
+    "zf": 100,
+    "zc": 102,
+    "w0Ratio": 1.0,
+    "ha": 1.0,
+    "hd": 1.0,
+    "toothAngle": 9.17,
+    "toothThickness": 0.5,
+    "rootFillet": 0.15,
+    "clearance": 0.05,
+    "wallFlex": 0.75,
+    "wallCirc": 3.0,
 }
 
 
-def simpson(f, a, b, n=400):
-    if n % 2 == 1:
-        n += 1
-    h = (b - a) / n
-    s = f(a) + f(b)
-    for i in range(1, n):
-        s += f(a + i * h) * (4 if i % 2 else 2)
-    return s * h / 3
-
-
-def rho(phi1, rho_a, rho_b):
-    s, c = math.sin(phi1), math.cos(phi1)
-    D = rho_a * rho_a * s * s + rho_b * rho_b * c * c
-    return (rho_a * rho_b) / math.sqrt(D)
-
-
-def drho(phi1, rho_a, rho_b):
-    s, c = math.sin(phi1), math.cos(phi1)
-    D = rho_a * rho_a * s * s + rho_b * rho_b * c * c
-    Dp = math.sin(2 * phi1) * (rho_a * rho_a - rho_b * rho_b)
-    return (-rho_a * rho_b * Dp) / (2 * D ** 1.5)
-
-
-def neutral_line_arc_length(rho_a, rho_b):
-    def f(phi):
-        r = rho(phi, rho_a, rho_b)
-        dr = drho(phi, rho_a, rho_b)
-        return math.sqrt(r * r + dr * dr)
-
-    return simpson(f, 0, math.pi / 2, 800)
-
-
-def solve_rho_b(rm, rho_a):
-    target = rm * math.pi / 2
-    lo, hi = rho_a * 0.5, rho_a
-    flo = neutral_line_arc_length(rho_a, lo) - target
-    for _ in range(80):
+def _bisect(f, lo, hi, iters=60):
+    flo = f(lo)
+    for _ in range(iters):
         mid = 0.5 * (lo + hi)
-        fm = neutral_line_arc_length(rho_a, mid) - target
-        if abs(fm) < 1e-9:
-            return mid
+        fm = f(mid)
         if (fm > 0) == (flo > 0):
             lo, flo = mid, fm
         else:
@@ -72,197 +44,420 @@ def solve_rho_b(rm, rho_a):
     return 0.5 * (lo + hi)
 
 
-def d_cycloid(t, k, m):
-    return (k * m * (t - math.sin(t)) / 4.0, k * m * (1 + math.cos(t)) / 2.0)
+def max_tooth_angle(s0, ha):
+    return math.atan(s0 / (2 * ha))
 
 
-def derive_hd_params(m, OD, ID, ha_star=None, hf_star=None, w0_star=None,
-                      cs_rim=None, dedendum_x_taper=None, addendum_x_taper=None,
-                      tooth_diff=None):
-    ha_star = DEFAULTS["haStar"] if ha_star is None else ha_star
-    hf_star = DEFAULTS["hfStar"] if hf_star is None else hf_star
-    w0_star = DEFAULTS["w0Star"] if w0_star is None else w0_star
-    cs_rim = DEFAULTS["csRimFactor"] * m if cs_rim is None else cs_rim
-    dedendum_x_taper = DEFAULTS["dedendumXTaper"] if dedendum_x_taper is None else dedendum_x_taper
-    addendum_x_taper = DEFAULTS["addendumXTaper"] if addendum_x_taper is None else addendum_x_taper
-    tooth_diff = DEFAULTS["fsToothDiffFactor"] if tooth_diff is None else tooth_diff
+def solve_joint_param(s0, ha, alpha0):
+    if not (alpha0 > 0):
+        return 0.0
+    target = math.tan(alpha0)
+
+    def f(t):
+        return s0 * math.sin(t) / (ha * (math.pi - t + math.sin(t))) - target
+
+    return _bisect(f, 0.0, math.pi)
+
+
+def derive_geometry(module=None, zf=None, zc=None, w0_ratio=None, ha=None, hd=None,
+                     tooth_angle=None, tooth_thickness=None, root_fillet=None,
+                     clearance=None, wall_flex=None, wall_circ=None):
+    m = DEFAULTS["module"] if module is None else module
+    zf = int(round(DEFAULTS["zf"] if zf is None else zf))
+    zc = int(round(DEFAULTS["zc"] if zc is None else zc))
+    w0_ratio = DEFAULTS["w0Ratio"] if w0_ratio is None else w0_ratio
+    ha_star = DEFAULTS["ha"] if ha is None else ha
+    hd_star = DEFAULTS["hd"] if hd is None else hd
+    root_fillet_star = DEFAULTS["rootFillet"] if root_fillet is None else root_fillet
+    clearance_star = DEFAULTS["clearance"] if clearance is None else clearance
+    thick = min(0.5, max(1e-3, DEFAULTS["toothThickness"] if tooth_thickness is None else tooth_thickness))
+    wall_flex = DEFAULTS["wallFlex"] if wall_flex is None else wall_flex
+    wall_circ = DEFAULTS["wallCirc"] if wall_circ is None else wall_circ
+
+    rp = m * zf / 2.0
+    w0 = w0_ratio * m
+
+    a = rp + w0
+    b = (1.0 / 9.0) * (12 * rp - 7 * a + 4 * math.sqrt(max(0.0, a * (3 * rp - 2 * a))))
+    if not (b > 0):
+        b = 1e-6
+
+    s0 = thick * math.pi * m / 2.0
+    ha_ = ha_star * m
+    hd_ = hd_star * m
+    root_fillet = root_fillet_star * m
+    clearance = clearance_star * m
+
+    alpha0 = (DEFAULTS["toothAngle"] if tooth_angle is None else tooth_angle) * math.pi / 180.0
+    alpha0 = max(0.0, min(alpha0, 0.98 * max_tooth_angle(s0, ha_)))
+    tE = solve_joint_param(s0, ha_, alpha0)
 
     warnings = []
-
-    Ra2_raw = OD / 2 - cs_rim
-    z2 = round(2 * (Ra2_raw / m + ha_star))
-    if z2 < 60:
+    if zc <= zf:
+        warnings.append("서큘러스플라인 잇수(zc)는 플렉스스플라인 잇수(zf)보다 많아야 합니다.")
+    stroke = a - b
+    stroke_margin = ha_ + hd_ + clearance - stroke
+    if stroke_margin < 0:
         warnings.append(
-            "산출된 서큘러스플라인 잇수(z2=%d)가 매우 적습니다. 모듈을 줄이거나 외경을 늘려주세요." % z2
+            "이 높이(ha+hd)로는 파형발생기 반경 스트로크를 다 감당하지 못합니다 — ha*/hd*를 늘리거나 w0*를 줄이세요."
         )
-        z2 = max(z2, 12)
-    Ra2 = m * (z2 / 2.0 - ha_star)
-    R2 = Ra2 + ha_star * m
-    Rf2 = R2 + hf_star * m
-    cs_outer_actual = 2 * (Rf2 + cs_rim * 0.4)
-
-    z1 = z2 - tooth_diff
-    ratio = z1 / float(tooth_diff)
-    R1 = m * z1 / 2.0
-    Ra1 = R1 + ha_star * m
-    Rf1 = R1 - hf_star * m
-
-    bore = ID / 2.0
-    wall_fs = Rf1 - bore
-    if wall_fs <= m * 0.3:
-        warnings.append(
-            "플렉스스플라인 벽 두께(%.2f mm)가 너무 얇습니다. 내경을 줄이거나 외경/모듈을 조정해주세요." % wall_fs
-        )
-    elif wall_fs > 0.05 * R1:
-        warnings.append(
-            "플렉스스플라인 벽 두께(%.2f mm)가 실제 하모닉 드라이브 대비 두껍습니다(탄성 변형이 어려울 수 있음). "
-            "일반적으로 내경을 이뿌리원 지름에 가깝게 설정합니다. 참고 벽 두께: %.2f mm 내외."
-            % (wall_fs, 0.02 * R1)
-        )
-    rm = R1 - wall_fs / 2.0
-
-    rho_a = rm + m * w0_star
-    rho_b = solve_rho_b(rm, rho_a)
-
-    et2 = math.pi * m / 2.0
-    s1 = math.pi * m / 2.0
-
-    # Axial face width - auto-derived so the user never has to specify it.
-    # Real harmonic drives scale face width roughly with pitch diameter
-    # (~10-15%), with a floor tied to the module so fine-pitch small drives
-    # don't end up unrealistically thin. CS is slightly wider than FS (extra
-    # engagement margin); the WG cam is slightly narrower than FS.
-    base_width = max(8.0 * m, 0.10 * OD)
-    fs_width = base_width
-    cs_width = base_width * 1.2
-    wg_width = base_width * 0.8
-
-    # Default pitch-circle-diameter for optional mounting holes: sits in the
-    # middle of the available solid land (CS: between root and structural
-    # OD; FS: between bore and root).
-    cs_hole_pcd = Rf2 + (cs_outer_actual / 2.0 - Rf2) * 0.5
-    fs_hole_pcd = bore + (Rf1 - bore) * 0.5
-
-    feasible = wall_fs > m * 0.15 and z1 > 20
 
     return dict(
-        m=m, OD=OD, ID=ID, haStar=ha_star, hfStar=hf_star, w0Star=w0_star,
-        csRim=cs_rim, dedendumXTaper=dedendum_x_taper, addendumXTaper=addendum_x_taper,
-        toothDiff=tooth_diff, z1=z1, z2=z2, ratio=ratio, R1=R1, Ra1=Ra1, Rf1=Rf1,
-        R2=R2, Ra2=Ra2, Rf2=Rf2, csOuterActual=cs_outer_actual, wallFS=wall_fs,
-        rm=rm, rhoA=rho_a, rhoB=rho_b, et2=et2, s1=s1, bore=bore,
-        csWidth=cs_width, fsWidth=fs_width, wgWidth=wg_width,
-        csHolePCD=cs_hole_pcd, fsHolePCD=fs_hole_pcd,
-        warnings=warnings, feasible=feasible,
+        m=m, zf=zf, zc=zc, rp=rp, rm=rp, w0=w0, a=a, b=b, ha=ha_, hd=hd_,
+        haStar=ha_star, hdStar=hd_star, s0=s0, toothThickness=thick,
+        rootFillet=root_fillet, clearance=clearance, alpha0=alpha0, tE=tE,
+        halfPitch=math.pi * m / 2.0, wallFlex=wall_flex, wallCirc=wall_circ,
+        stroke=stroke, strokeMargin=stroke_margin, warnings=warnings,
+        feasible=(zc > zf and stroke_margin >= 0 and wall_flex > 0),
     )
 
 
-def cs_addendum_point(t, p):
-    kx = p["haStar"] * p["addendumXTaper"]
-    dx, _ = d_cycloid(t, kx, p["m"])
-    _, dy = d_cycloid(t, p["haStar"], p["m"])
-    return (p["et2"] / 2.0 + dx, p["R2"] - p["haStar"] * p["m"] + dy)
+def wave_deform(d, psi):
+    a, b = d["a"], d["b"]
+    s, c = math.sin(psi), math.cos(psi)
+    D = a * a * s * s + b * b * c * c
+    rho = a * b / math.sqrt(D)
+    rho_p = -a * b * (a * a - b * b) * math.sin(2 * psi) / (2 * D ** 1.5)
+    mu = -math.atan2(rho_p, rho)
+    v = -(d["w0"] / 2.0) * math.sin(2 * psi)
+    return dict(rho=rho, w=rho - d["rm"], v=v, mu=mu)
 
 
-def cs_dedendum_point(t, p):
-    kx = p["hfStar"] * p["dedendumXTaper"]
-    dx, _ = d_cycloid(t, kx, p["m"])
-    _, dy = d_cycloid(t, p["hfStar"], p["m"])
-    return (p["et2"] / 2.0 - dx, p["R2"] + p["hfStar"] * p["m"] - dy)
+def rotate_into_section(x, y, cos_mu, sin_mu):
+    return (x * cos_mu + y * sin_mu, -x * sin_mu + y * cos_mu)
 
 
-def fs_addendum_point(t, p):
-    kx = p["haStar"] * p["addendumXTaper"]
-    dx, _ = d_cycloid(t, kx, p["m"])
-    _, dy = d_cycloid(t, p["haStar"], p["m"])
-    return (p["s1"] / 2.0 - dx, p["haStar"] * p["m"] - dy)
+def polar_place(R, theta, t, r):
+    rad = R + r
+    ang = theta + t / (rad or 1.0)
+    return (rad * math.cos(ang), rad * math.sin(ang), rad, ang)
 
 
-def fs_dedendum_point(t, p):
-    kx = p["hfStar"] * p["dedendumXTaper"]
-    dx, _ = d_cycloid(t, kx, p["m"])
-    _, dy = d_cycloid(t, p["hfStar"], p["m"])
-    return (p["s1"] / 2.0 + dx, -p["hfStar"] * p["m"] + dy)
+def cycloid_unit(u, tE):
+    t = tE + (math.pi - tE) * u
+    XE = tE - math.sin(tE)
+    cE = math.cos(tE)
+    fx = (t - math.sin(t) - XE) / (math.pi - XE)
+    fy = (cE - math.cos(t)) / (1 + cE)
+    return fx, fy
 
 
-def place_local_on_pitch(x1, y1, R, k, z, base_angle=0.0):
-    radius = R + y1
-    ang = base_angle + (k * 2 * math.pi) / z + x1 / radius
-    return (radius * math.sin(ang), radius * math.cos(ang))
+def addendum_flank(d):
+    def f(u):
+        fx, fy = cycloid_unit(u, d["tE"])
+        return (d["s0"] * (1 - fx), d["ha"] * fy)
+    return f
 
 
-def place_global(x2, y2, k, z, base_angle=0.0):
-    ang = base_angle + (k * 2 * math.pi) / z
-    c, s = math.cos(ang), math.sin(ang)
-    return (x2 * c - y2 * s, x2 * s + y2 * c)
+def dedendum_flank(add_fn, s0):
+    def f(u):
+        qx, qy = add_fn(u)
+        return (2 * s0 - qx, -qy)
+    return f
 
 
-def _sample_flank(fn, p, n_seg):
+def _resample_by_arc_length(fn, u_end, n):
+    M = 300
+    pts = [fn(u_end * i / M) for i in range(M + 1)]
+    cum = [0.0]
+    for i in range(1, M + 1):
+        cum.append(cum[-1] + math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]))
+    total = cum[M]
+    out = []
+    j = 0
+    for i in range(n + 1):
+        target = total * i / n
+        while j < M - 1 and cum[j + 1] < target:
+            j += 1
+        seg = cum[j + 1] - cum[j]
+        f = (target - cum[j]) / seg if seg > 1e-15 else 0.0
+        f = min(f, 1.0)
+        out.append((pts[j][0] + (pts[j + 1][0] - pts[j][0]) * f,
+                    pts[j][1] + (pts[j + 1][1] - pts[j][1]) * f))
+    out[n] = pts[M]
+    return out
+
+
+def _flank_arc_length(fn, u_end):
+    M = 100
+    L = 0.0
+    prev = fn(0)
+    for i in range(1, M + 1):
+        q = fn(u_end * i / M)
+        L += math.hypot(q[0] - prev[0], q[1] - prev[1])
+        prev = q
+    return L
+
+
+def _fit_root_fillet(hd, flank_fn, rf):
+    if not (rf > 0):
+        return None
+    target = -hd + rf
+    h = 1e-5
+
+    def centre_at(u):
+        qx, qy = flank_fn(u)
+        ax, ay = flank_fn(max(0.0, u - h))
+        bx, by = flank_fn(min(1.0, u + h))
+        tx, ty = bx - ax, by - ay
+        L = math.hypot(tx, ty) or 1.0
+        nx, ny = -ty / L, tx / L
+        return (qx + rf * nx, qy + rf * ny, qx, qy)
+
+    lo_c = centre_at(0.0)
+    hi_c = centre_at(1.0)
+    if lo_c[1] < target or hi_c[1] > target:
+        return None
+    lo, hi = 0.0, 1.0
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        if centre_at(mid)[1] > target:
+            lo = mid
+        else:
+            hi = mid
+    u = 0.5 * (lo + hi)
+    cx, cy, px, py = centre_at(u)
+    return dict(cx=cx, cy=target, r=rf, u=u, px=px, py=py)
+
+
+_geom_cache = {}
+
+
+def tooth_geometry(d):
+    key = (d["m"], d["ha"], d["hd"], d["rootFillet"], d["tE"], d["s0"])
+    if key in _geom_cache:
+        return _geom_cache[key]
+
+    add_fn = addendum_flank(d)
+    ded_fn = dedendum_flank(add_fn, d["s0"])
+    hd_eff = min(d["hd"], d["ha"])
+    at_full_depth = hd_eff > d["ha"] - 1e-9
+    rf = 0.0 if at_full_depth else min(d["rootFillet"], hd_eff * 0.45)
+    fil = _fit_root_fillet(hd_eff, ded_fn, rf) if rf > 0 else None
+
+    g = dict(addFn=add_fn, dedFn=ded_fn, hdEff=hd_eff, fil=fil)
+    if len(_geom_cache) > 128:
+        _geom_cache.clear()
+    _geom_cache[key] = g
+    return g
+
+
+def crest_radius(add_fn):
+    h = 1e-4
+    p0 = add_fn(1 - 2 * h)
+    p1 = add_fn(1 - h)
+    p2 = add_fn(1)
+    x1, y1 = (p2[0] - p0[0]) / (2 * h), (p2[1] - p0[1]) / (2 * h)
+    x2 = (p2[0] - 2 * p1[0] + p0[0]) / (h * h)
+    y2 = (p2[1] - 2 * p1[1] + p0[1]) / (h * h)
+    k = abs(x1 * y2 - y1 * x2)
+    return (x1 * x1 + y1 * y1) ** 1.5 / k if k > 1e-12 else float("inf")
+
+
+def _offset_polyline(pts, dist):
+    out = []
+    n = len(pts)
+    for i in range(n):
+        ax, ay = pts[max(0, i - 1)]
+        bx, by = pts[min(n - 1, i + 1)]
+        dx, dy = bx - ax, by - ay
+        length = math.hypot(dx, dy) or 1.0
+        px, py = pts[i]
+        out.append((px - (dy / length) * dist, py + (dx / length) * dist))
+    return out
+
+
+def tooth_profile(d, inflate=0.0, samples_per_flank=24):
+    n = max(6, samples_per_flank)
+    g = tooth_geometry(d)
+    add_fn, ded_fn, fil = g["addFn"], g["dedFn"], g["fil"]
+    u_root = fil["u"] if fil else 1.0
+
+    Ld = _flank_arc_length(ded_fn, u_root)
+    La = _flank_arc_length(add_fn, 1.0)
+    nd = max(3, round(n * Ld / (Ld + La)))
+    na = max(3, n - nd)
+    ded = _resample_by_arc_length(ded_fn, u_root, nd)
+    arc_step = math.pi / max(8, n / 2)
+
+    fil_arc = []
+    if fil:
+        a0 = math.atan2(fil["py"] - fil["cy"], fil["px"] - fil["cx"])
+        a1 = -math.pi / 2
+        da = a1 - a0
+        while da > math.pi:
+            da -= 2 * math.pi
+        while da < -math.pi:
+            da += 2 * math.pi
+        nf = max(4, math.ceil(abs(da) / arc_step))
+        for i in range(1, nf + 1):
+            aa = a0 + da * i / nf
+            fil_arc.append((fil["cx"] + fil["r"] * math.cos(aa), fil["cy"] + fil["r"] * math.sin(aa)))
+    else:
+        fil_arc.append(ded_fn(u_root))
+
+    add = _resample_by_arc_length(add_fn, 1.0, na)[1:]
+
+    right = []
+    right.extend(reversed(fil_arc))
+    right.extend(reversed(ded))
+    right.extend(add)
+
     pts = []
-    for i in range(n_seg + 1):
-        t = math.pi * i / n_seg
-        pts.append(fn(t, p))
+    for i in range(len(right) - 1):
+        pts.append((-right[i][0], right[i][1]))
+    for i in range(len(right) - 1, -1, -1):
+        pts.append(right[i])
+
+    return _offset_polyline(pts, inflate) if inflate else pts
+
+
+def tooth_with_root_land(d, inflate=0.0, samples_per_flank=28):
+    tooth = tooth_profile(d, inflate, samples_per_flank)
+    y_root = -tooth_geometry(d)["hdEff"] + (inflate or 0.0)
+    x_end = d["halfPitch"]
+    xL, xR = tooth[0][0], tooth[-1][0]
+    n_land = 10
+    pts = []
+    if xL + x_end > 1e-9:
+        for i in range(n_land):
+            pts.append((-x_end + (xL + x_end) * (i / n_land), y_root))
+    pts.extend(tooth)
+    if x_end - xR > 1e-9:
+        for i in range(1, n_land + 1):
+            pts.append((xR + (x_end - xR) * (i / n_land), y_root))
     return pts
 
 
-def build_tooth_outline(kind, p, n_seg=24):
-    """Returns (outline, root_right, tip). For 'cs' this is a SPACE (notch,
-    concave) profile between two adjacent teeth; for 'fs' it is a solid
-    tooth (convex) profile. See core-math.js for the derivation."""
-    add_fn = cs_addendum_point if kind == "cs" else fs_addendum_point
-    ded_fn = cs_dedendum_point if kind == "cs" else fs_dedendum_point
-
-    ded_right = _sample_flank(ded_fn, p, n_seg)  # 0=pitch ... last=root
-    add_right = _sample_flank(add_fn, p, n_seg)  # 0=pitch ... last=tip
-
-    root_right = ded_right[-1]
-    tip = add_right[-1]
-
-    outline = []
-    for i in range(len(ded_right) - 1, -1, -1):
-        x, y = ded_right[i]
-        outline.append((-x, y))
-    for i in range(1, len(add_right)):
-        x, y = add_right[i]
-        outline.append((-x, y))
-    for i in range(len(add_right) - 1, -1, -1):
-        outline.append(add_right[i])
-    for i in range(1, len(ded_right)):
-        outline.append(ded_right[i])
-    return outline, root_right, tip
+def flexspline_profile(d, zf, samples_per_flank=48):
+    tooth = tooth_profile(d, 0.0, samples_per_flank)
+    g = tooth_geometry(d)
+    root_r = d["rp"] - g["hdEff"]
+    pitch_angle = 2 * math.pi / zf
+    outer = []
+    for k in range(zf):
+        theta0 = k * pitch_angle
+        for x, y in tooth:
+            ang = theta0 + x / d["rp"]
+            r = d["rp"] + y
+            outer.append((r * math.cos(ang), r * math.sin(ang)))
+        a0 = theta0 + tooth[-1][0] / d["rp"]
+        a1 = theta0 + pitch_angle + tooth[0][0] / d["rp"]
+        arc_n = 10
+        if (a1 - a0) * root_r > 1e-9:
+            for i in range(1, arc_n):
+                aa = a0 + (a1 - a0) * (i / arc_n)
+                outer.append((root_r * math.cos(aa), root_r * math.sin(aa)))
+    return dict(outer=outer, rootRadius=root_r, tipRadius=d["rp"] + d["ha"])
 
 
-def build_cs_ring_notches(p, n_seg=16, base_angle=0.0):
-    outline, _, _ = build_tooth_outline("cs", p, n_seg)
-    z2 = p["z2"]
-    all_notches = []
-    for k in range(z2):
-        all_notches.append([place_global(x, y, k, z2, base_angle) for x, y in outline])
-    return all_notches
+def _rasterize_core(env, n_bins, half_pitch, a0, r0, a1, r1):
+    if a1 < -half_pitch or a0 > half_pitch:
+        return
+    bin_w = 2 * half_pitch / n_bins
+    b0 = max(0, int(math.floor((a0 + half_pitch) / bin_w)))
+    b1 = min(n_bins - 1, int(math.floor((a1 + half_pitch) / bin_w)))
+    for b in range(b0, b1 + 1):
+        ac = -half_pitch + (b + 0.5) * bin_w
+        if a1 - a0 < 1e-12:
+            r = max(r0, r1)
+        else:
+            f = max(0.0, min(1.0, (ac - a0) / (a1 - a0)))
+            r = r0 + f * (r1 - r0)
+        if r > env[b]:
+            env[b] = r
 
 
-def build_fs_ring_teeth(p, n_seg=16, base_angle=0.0):
-    outline, _, _ = build_tooth_outline("fs", p, n_seg)
-    z1 = p["z1"]
-    R1 = p["R1"]
-    all_teeth = []
-    for k in range(z1):
-        all_teeth.append([place_local_on_pitch(x, y, R1, k, z1, base_angle) for x, y in outline])
-    return all_teeth
+def _rasterize_segment(env, n_bins, half_pitch, a0, r0, a1, r1):
+    if a0 > a1:
+        a0, a1 = a1, a0
+        r0, r1 = r1, r0
+    pitch = 2 * half_pitch
+    k_lo = int(math.floor((-half_pitch - a1) / pitch))
+    k_hi = int(math.ceil((half_pitch - a0) / pitch))
+    for k in range(k_lo, k_hi + 1):
+        _rasterize_core(env, n_bins, half_pitch, a0 + k * pitch, r0, a1 + k * pitch, r1)
 
 
-def build_wave_generator_cam(p, n_seg=240):
+def conjugate_slot(d, zs, zf, clearance, n_bins=256, steps=500):
+    pitch = 2 * math.pi / zs
+    half_pitch = pitch / 2.0
+    dz = zs - zf
+    tooth = tooth_with_root_land(d, clearance, 28)
+    env = [0.0] * n_bins
+
+    phi_max = math.pi / 2 / (1 + dz / zf)
+    for s in range(steps + 1):
+        phi = -phi_max + (2 * phi_max * s) / steps
+        theta_body = -phi * dz / zf
+        psi = theta_body - phi
+        deform = wave_deform(d, psi)
+        theta = theta_body + deform["v"] / d["rm"]
+        R = deform["rho"]
+        cos_m, sin_m = math.cos(deform["mu"]), math.sin(deform["mu"])
+
+        prev_a, prev_r = None, None
+        for x, y in tooth:
+            t, r = rotate_into_section(x, y, cos_m, sin_m)
+            px, py, rad, ang = polar_place(R, theta, t, r)
+            if prev_a is not None:
+                _rasterize_segment(env, n_bins, half_pitch, prev_a, prev_r, ang, rad)
+            prev_a, prev_r = ang, rad
+
+    for j in range(n_bins // 2):
+        mj = n_bins - 1 - j
+        mx = max(env[j], env[mj])
+        env[j] = mx
+        env[mj] = mx
+
+    r_floor = wave_deform(d, math.pi / 2)["rho"] + d["ha"] + clearance
+    blend = max(clearance, 0.02 * d["m"])
+    for k in range(n_bins):
+        e = env[k] - r_floor
+        env[k] = r_floor + 0.5 * (e + math.sqrt(e * e + blend * blend))
+
+    return dict(radii=env, halfPitch=half_pitch, nBins=n_bins)
+
+
+def spline_profile(d, zs, zf, wall, clearance, n_bins=256, steps=500):
+    slot = conjugate_slot(d, zs, zf, clearance, n_bins, steps)
+    inner = []
+    max_r = 0.0
+    pitch = 2 * math.pi / zs
+    for k in range(zs):
+        base = k * pitch
+        for b in range(slot["nBins"]):
+            ang = base - slot["halfPitch"] + (b + 0.5) * (2 * slot["halfPitch"] / slot["nBins"])
+            r = slot["radii"][b]
+            if r > max_r:
+                max_r = r
+            inner.append((r * math.cos(ang), r * math.sin(ang)))
+    return dict(inner=inner, outerRadius=max_r + wall, slotBottomRadius=max_r)
+
+
+def wave_generator_cam(d, n_seg=240):
     pts = []
     for i in range(n_seg + 1):
         phi = 2 * math.pi * i / n_seg
-        r = rho(phi, p["rhoA"], p["rhoB"]) - p["wallFS"] / 2.0
+        deform = wave_deform(d, phi)
+        r = deform["rho"] - d["wallFlex"] / 2.0
         pts.append((r * math.sin(phi), r * math.cos(phi)))
     return pts
 
 
-def circle_points(r, n_seg=180):
+def circle_points(r, cx=0.0, cy=0.0, n_seg=180):
     pts = []
     for i in range(n_seg + 1):
         a = 2 * math.pi * i / n_seg
-        pts.append((r * math.sin(a), r * math.cos(a)))
+        pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
     return pts
+
+
+def generate(m, zf, zc, w0_ratio=None, ha=None, hd=None, tooth_angle=None,
+             tooth_thickness=None, root_fillet=None, clearance=None,
+             wall_flex=None, wall_circ=None, samples_per_flank=48, n_bins=256, steps=500):
+    d = derive_geometry(m, zf, zc, w0_ratio, ha, hd, tooth_angle, tooth_thickness,
+                         root_fillet, clearance, wall_flex, wall_circ)
+    flex = flexspline_profile(d, d["zf"], samples_per_flank)
+    circ = spline_profile(d, d["zc"], d["zf"], d["wallCirc"], d["clearance"], n_bins, steps)
+    return d, flex, circ
