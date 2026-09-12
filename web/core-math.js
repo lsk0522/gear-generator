@@ -475,6 +475,70 @@
     return { outer, rootRadius: rootR, tipRadius: d.rp + d.ha };
   }
 
+  /**
+   * Undeformed flexspline outline captured as polar (radius, angle) arrays
+   * instead of Cartesian points, so an animation can cheaply re-deform the
+   * SAME geometry every frame via deformFlexspline() without recomputing the
+   * tooth profile. `outer` covers the full continuous profile (teeth and
+   * root lands); `inner` samples the bore circle.
+   */
+  function flexsplineRest(d, zf, bore, samplesPerFlank) {
+    const prof = flexsplineProfile(d, zf, samplesPerFlank);
+    const outerR = new Float64Array(prof.outer.length);
+    const outerA = new Float64Array(prof.outer.length);
+    prof.outer.forEach((pt, i) => {
+      outerR[i] = Math.hypot(pt.x, pt.y);
+      outerA[i] = Math.atan2(pt.y, pt.x);
+    });
+    const nIn = Math.max(160, zf * 2);
+    const innerR = new Float64Array(nIn);
+    const innerA = new Float64Array(nIn);
+    for (let i = 0; i < nIn; i++) {
+      innerR[i] = bore;
+      innerA[i] = (2 * Math.PI * i) / nIn - Math.PI;
+    }
+    return { outerR, outerA, innerR, innerA, rm: d.rm, a: d.a, b: d.b, w0: d.w0, dz: d.zc - zf, zf };
+  }
+
+  /**
+   * Deform a rest outline (from flexsplineRest) by the wave generator at
+   * input angle `omega`, for a live "rotate the WG" preview. Every point
+   * maps through the SAME continuous displacement field used to build the
+   * conjugate envelope (Eqs. 4/8: elliptical neutral-line motion (rho, v)
+   * plus section rotation mu) evaluated at that point's own body angle, so
+   * teeth and root lands always join with no per-tooth seams:
+   *   - a point at body angle `a` sits at psi = (a + phiFs) - omega from the
+   *     major axis, where phiFs = -omega*dz/zf is the flexspline body's own
+   *     slow rotation (gear-ratio drift);
+   *   - its height h above the neutral line rides the section: it lands at
+   *     radius rho + h*cos(mu) with tangential offset +h*sin(mu) (via
+   *     rotateIntoSection / polarPlace, same as conjugateSlot uses).
+   */
+  function deformFlexspline(rest, omega) {
+    const d = { a: rest.a, b: rest.b, rm: rest.rm, w0: rest.w0 };
+    const phiFs = (-omega * rest.dz) / rest.zf;
+
+    function mapLoop(rArr, aArr) {
+      const out = new Array(rArr.length);
+      for (let i = 0; i < rArr.length; i++) {
+        const aBody = aArr[i] + phiFs;
+        const h = rArr[i] - rest.rm;
+        const def = waveDeform(d, aBody - omega);
+        const cosM = Math.cos(def.mu),
+          sinM = Math.sin(def.mu);
+        const sec = rotateIntoSection(0, h, cosM, sinM);
+        const R = def.rho,
+          T = aBody + def.v / rest.rm;
+        const rad = R + sec.r;
+        const ang = T + sec.t / (rad || 1);
+        out[i] = { x: rad * Math.cos(ang), y: rad * Math.sin(ang) };
+      }
+      return out;
+    }
+
+    return { outer: mapLoop(rest.outerR, rest.outerA), inner: mapLoop(rest.innerR, rest.innerA), phiFs };
+  }
+
   /** Accumulate a Cartesian-interpolated (angle, radius) line segment into a
    * max-radius-per-angular-bin envelope. Anything crossing outside the
    * pitch window [-halfPitch, halfPitch] is periodic with this same slot, so
@@ -763,6 +827,8 @@
     toothProfile,
     toothWithRootLand,
     flexsplineProfile,
+    flexsplineRest,
+    deformFlexspline,
     conjugateSlot,
     splineProfile,
     measureBacklash,

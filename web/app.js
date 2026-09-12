@@ -19,6 +19,7 @@
     wallCirc: $("#in-wallcirc"),
     rotation: $("#in-rotation"),
     rotationVal: $("#in-rotation-val"),
+    play: $("#in-play"),
     resultGrid: $("#result-grid"),
     metricGrid: $("#metric-grid"),
     warnings: $("#warnings"),
@@ -86,6 +87,10 @@
     return d + "Z";
   }
 
+  function buildRingPath(loops, scale, rotAngle) {
+    return loops.map((loop) => loopToPathD(loop, scale, rotAngle)).join(" ");
+  }
+
   function svgEl(tag, attrs) {
     const e = document.createElementNS("http://www.w3.org/2000/svg", tag);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -96,35 +101,59 @@
     while (svg.firstChild) svg.removeChild(svg.firstChild);
   }
 
-  function render() {
+  const mainFit = ViewFit.make(),
+    detailFit = ViewFit.make();
+
+  // ------------------------------------------------------------------
+  // Geometry cache: full recompute happens on parameter change; rotating
+  // the WG slider only re-poses the (already-computed) flexspline via
+  // deformFlexspline() and redraws, so animation stays cheap.
+  // ------------------------------------------------------------------
+  let cur = null; // { d, flex, circ, rest, bore }
+
+  function compute() {
     const input = readInputs();
     const d = HDMath.deriveGeometry(input);
-
     if (!d.feasible) {
-      renderInfeasible(d);
+      cur = { d, feasible: false };
       return;
     }
+    const flex = HDMath.flexsplineProfile(d, d.zf, 48);
+    const circ = HDMath.splineProfile(d, d.zc, d.zf, d.wallCirc, d.clearance);
+    const bore = flex.rootRadius - d.wallFlex;
+    const rest = HDMath.flexsplineRest(d, d.zf, bore, 48);
+    cur = { d, flex, circ, rest, bore, feasible: true };
+  }
 
-    const gen = HDMath.generate(input);
-    const metrics = HDMath.computeMetrics(input, gen);
-
-    renderResults(d, gen);
+  function render() {
+    compute();
+    if (!cur.feasible) {
+      renderInfeasible(cur.d);
+      return;
+    }
+    const metrics = HDMath.computeMetrics(null, { d: cur.d, flex: cur.flex, circ: cur.circ });
+    renderResults(cur.d, cur.flex, cur.circ);
     renderMetrics(metrics);
-    renderWarnings(d);
-    renderMainSvg(d, gen);
-    renderDetailSvg(d, gen);
-    wireDownloads(d, gen);
+    renderWarnings(cur.d);
+    redrawGeometry();
+    wireDownloads(cur.d, cur.flex, cur.circ);
+  }
+
+  function redrawGeometry() {
+    if (!cur || !cur.feasible) return;
+    renderMainSvg(cur.d, cur.flex, cur.circ, cur.rest, cur.bore);
+    renderDetailSvg(cur.d, cur.flex, cur.circ, cur.rest, cur.bore);
   }
 
   function renderInfeasible(d) {
-    els.warnings.innerHTML = d.warnings.map((w) => `<div class="error">✕ ${w}</div>`).join("");
+    els.warnings.innerHTML = (d.warnings || []).map((w) => `<div class="error">✕ ${w}</div>`).join("");
     els.resultGrid.innerHTML = "";
     els.metricGrid.innerHTML = "";
     clear(els.svgMain);
     clear(els.svgDetail);
   }
 
-  function renderResults(d, gen) {
+  function renderResults(d, flex, circ) {
     const rows = [
       ["감속비 (zf / (zc−zf))", "1 : " + Math.round(d.zf / (d.zc - d.zf)), true],
       ["플렉스스플라인 잇수 (zf)", d.zf, false],
@@ -134,8 +163,8 @@
       ["이빨각 α0 (적용값)", fmt((d.alpha0 * 180) / Math.PI, 2) + "°", false],
       ["이뿌리 필렛 반경", fmt(d.rootFillet) + " mm", false],
       ["FS 벽 두께 / CS 벽 두께", fmt(d.wallFlex, 2) + " / " + fmt(d.wallCirc, 2) + " mm", false],
-      ["FS 이끝원 / 이뿌리원", fmt(gen.flex.tipRadius) + " / " + fmt(gen.flex.rootRadius) + " mm", false],
-      ["CS 외경", fmt(2 * gen.circ.outerRadius) + " mm", false],
+      ["FS 이끝원 / 이뿌리원", fmt(flex.tipRadius) + " / " + fmt(flex.rootRadius) + " mm", false],
+      ["CS 외경", fmt(2 * circ.outerRadius) + " mm", false],
     ];
     els.resultGrid.innerHTML = rows
       .map(
@@ -166,21 +195,26 @@
     els.warnings.innerHTML = d.warnings.map((w) => `<div class="warning">⚠ ${w}</div>`).join("");
   }
 
-  function renderMainSvg(d, gen) {
+  function rotationRad() {
+    return ((num(els.rotation, 0) || 0) * Math.PI) / 180;
+  }
+
+  function renderMainSvg(d, flex, circ, rest, bore) {
     const svg = els.svgMain;
     clear(svg);
     const W = 900,
       H = 900;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const outerR = gen.circ.outerRadius;
-    const scale = (W * 0.46) / outerR;
+    const outerR = circ.outerRadius;
+    const scale = ViewFit.fit(mainFit, W, 0.46, outerR, 0, 0).scale;
     const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
     svg.appendChild(g);
 
-    // Circular spline: outer circle + inner (conjugate slot) boundary, evenodd
+    // Circular spline: outer circle + conjugate-slot boundary, evenodd. Rigid
+    // and fixed - never redrawn differently across the WG animation.
     const csOuter = HDMath.circlePoints(outerR, 0, 0, 300);
     const csPath = svgEl("path", {
-      d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(gen.circ.inner, scale, 0),
+      d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(circ.inner, scale, 0),
       "fill-rule": "evenodd",
     });
     csPath.style.fill = "var(--cs-fill)";
@@ -188,11 +222,26 @@
     csPath.style.strokeWidth = "1";
     g.appendChild(csPath);
 
-    // Flexspline: outer (teeth) boundary + bore circle, evenodd, rotated by slider
-    const rot = ((num(els.rotation, 0) || 0) * Math.PI) / 180;
-    const bore = HDMath.circlePoints(gen.flex.rootRadius - d.wallFlex, 0, 0, 300);
+    // Wave generator: the physical elliptical cam, drawn rotated to the
+    // current input angle (visual only - the flexspline deformation below
+    // already reflects the same physics via deformFlexspline).
+    const rot = rotationRad();
+    const wg = HDMath.waveGeneratorCam(d, 240);
+    const wgPath = svgEl("path", { d: loopToPathD(wg, scale, rot), fill: "none" });
+    wgPath.style.stroke = "var(--wg-stroke)";
+    wgPath.style.strokeWidth = "1.4";
+    wgPath.style.strokeDasharray = "4 3";
+    g.appendChild(wgPath);
+
+    // Flexspline: physically deformed by the wave generator at this input
+    // angle (deformFlexspline maps the SAME rest outline through the exact
+    // elliptical neutral-line + section-rotation field the conjugate CS
+    // profile above was derived from) - teeth engage the circular spline at
+    // the major axis and clear it elsewhere; turning the slider sweeps the
+    // mesh zone around the ring.
+    const def = HDMath.deformFlexspline(rest, rot);
     const fsPath = svgEl("path", {
-      d: loopToPathD(gen.flex.outer, scale, rot) + " " + loopToPathD(bore, scale, rot),
+      d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
       "fill-rule": "evenodd",
     });
     fsPath.style.fill = "var(--fs-fill)";
@@ -200,13 +249,6 @@
     fsPath.style.strokeWidth = "1";
     fsPath.style.opacity = "0.92";
     g.appendChild(fsPath);
-
-    const wg = HDMath.waveGeneratorCam(d, 240);
-    const wgPath = svgEl("path", { d: loopToPathD(wg, scale, rot), fill: "none" });
-    wgPath.style.stroke = "var(--wg-stroke)";
-    wgPath.style.strokeWidth = "1.4";
-    wgPath.style.strokeDasharray = "4 3";
-    g.appendChild(wgPath);
 
     for (const r of [d.rp]) {
       const c = svgEl("path", { d: loopToPathD(HDMath.circlePoints(r, 0, 0, 200), scale, 0), fill: "none" });
@@ -217,20 +259,22 @@
     }
   }
 
-  function renderDetailSvg(d, gen) {
+  function renderDetailSvg(d, flex, circ, rest, bore) {
     const svg = els.svgDetail;
     clear(svg);
     const W = 500,
       H = 500;
     svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const scale = 220 / d.m;
-    const g = svgEl("g", { transform: `translate(${W / 2},${H * 0.7})` });
+    // Fixed camera at the top (+Y) - the mesh zone sweeps past it as the WG
+    // rotation angle changes, matching the main view's "play" animation.
+    const scale = ViewFit.fit(detailFit, W, 0.42, 9 * d.m, 0, 0).scale;
+    const focusR = (d.rp + flex.tipRadius) / 2;
+    const g = svgEl("g", { transform: `translate(${W / 2},${H / 2 + focusR * scale})` });
     svg.appendChild(g);
 
-    const outerR = gen.circ.outerRadius;
-    const csOuter = HDMath.circlePoints(outerR, 0, 0, 400);
+    const csOuter = HDMath.circlePoints(circ.outerRadius, 0, 0, 400);
     const csPath = svgEl("path", {
-      d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(gen.circ.inner, scale, 0),
+      d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(circ.inner, scale, 0),
       "fill-rule": "evenodd",
     });
     csPath.style.fill = "var(--cs-fill)";
@@ -238,10 +282,10 @@
     csPath.style.strokeWidth = "1.2";
     g.appendChild(csPath);
 
-    const rot = ((num(els.rotation, 0) || 0) * Math.PI) / 180;
-    const bore = HDMath.circlePoints(gen.flex.rootRadius - d.wallFlex, 0, 0, 400);
+    const rot = rotationRad();
+    const def = HDMath.deformFlexspline(rest, rot);
     const fsPath = svgEl("path", {
-      d: loopToPathD(gen.flex.outer, scale, rot) + " " + loopToPathD(bore, scale, rot),
+      d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
       "fill-rule": "evenodd",
     });
     fsPath.style.fill = "var(--fs-fill)";
@@ -263,20 +307,20 @@
     setTimeout(() => URL.revokeObjectURL(url), 2000);
   }
 
-  function wireDownloads(d, gen) {
+  function wireDownloads(d, flex, circ) {
     els.dlCS.onclick = () => {
-      const outer = HDMath.circlePoints(gen.circ.outerRadius, 0, 0, 360);
+      const outer = HDMath.circlePoints(circ.outerRadius, 0, 0, 360);
       const dxf = DXFWriter.buildDXF([
         { layer: "CS_OUTER", loops: [outer] },
-        { layer: "CS_SLOT", loops: [gen.circ.inner] },
+        { layer: "CS_SLOT", loops: [circ.inner] },
       ]);
       download("circular_spline.dxf", dxf);
     };
 
     els.dlFS.onclick = () => {
-      const bore = HDMath.circlePoints(gen.flex.rootRadius - d.wallFlex, 0, 0, 360);
+      const bore = HDMath.circlePoints(flex.rootRadius - d.wallFlex, 0, 0, 360);
       const dxf = DXFWriter.buildDXF([
-        { layer: "FS_TEETH", loops: [gen.flex.outer] },
+        { layer: "FS_TEETH", loops: [flex.outer] },
         { layer: "FS_BORE", loops: [bore] },
       ]);
       download("flexspline.dxf", dxf);
@@ -289,19 +333,23 @@
     };
 
     els.dlAll.onclick = () => {
-      const csOuter = HDMath.circlePoints(gen.circ.outerRadius, 0, 0, 360);
-      const fsBore = HDMath.circlePoints(gen.flex.rootRadius - d.wallFlex, 0, 0, 360);
+      const csOuter = HDMath.circlePoints(circ.outerRadius, 0, 0, 360);
+      const fsBore = HDMath.circlePoints(flex.rootRadius - d.wallFlex, 0, 0, 360);
       const wg = HDMath.waveGeneratorCam(d, 360);
       const dxf = DXFWriter.buildDXF([
         { layer: "CS_OUTER", loops: [csOuter] },
-        { layer: "CS_SLOT", loops: [gen.circ.inner] },
-        { layer: "FS_TEETH", loops: [gen.flex.outer] },
+        { layer: "CS_SLOT", loops: [circ.inner] },
+        { layer: "FS_TEETH", loops: [flex.outer] },
         { layer: "FS_BORE", loops: [fsBore] },
         { layer: "WG_CAM", loops: [wg] },
       ]);
       download("harmonic_drive_full.dxf", dxf);
     };
   }
+
+  // ------------------------------------------------------------------
+  // Wire up inputs
+  // ------------------------------------------------------------------
 
   let renderTimer = null;
   function scheduleRender() {
@@ -335,10 +383,56 @@
     els.wallCirc,
   ].forEach((el) => el && el.addEventListener("input", scheduleRender));
 
+  // The WG rotation only re-poses already-computed geometry, so redraw
+  // directly instead of going through the full recompute.
   els.rotation.addEventListener("input", () => {
     els.rotationVal.textContent = els.rotation.value + "°";
-    scheduleRender();
+    redrawGeometry();
   });
+
+  // play / pause the wave-generator animation (mesh sweeps around the ring)
+  let playing = false,
+    rafId = null,
+    lastT = 0;
+  function tick(t) {
+    if (!playing) return;
+    if (!lastT) lastT = t;
+    const dt = (t - lastT) / 1000;
+    lastT = t;
+    let v = num(els.rotation, 0) + dt * 60; // 60 deg/sec
+    v = ((v % 360) + 360) % 360;
+    els.rotation.value = v.toFixed(1);
+    els.rotationVal.textContent = Math.round(v) + "°";
+    redrawGeometry();
+    rafId = requestAnimationFrame(tick);
+  }
+  if (els.play) {
+    els.play.addEventListener("click", () => {
+      playing = !playing;
+      els.play.textContent = playing ? "⏸ 정지" : "▶ 재생";
+      if (playing) {
+        lastT = 0;
+        rafId = requestAnimationFrame(tick);
+      } else if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden && playing) {
+        playing = false;
+        els.play.textContent = "▶ 재생";
+        if (rafId) cancelAnimationFrame(rafId);
+      }
+    });
+  }
+
+  // double-click a preview to re-fit it to the current geometry
+  [els.svgMain, els.svgDetail].forEach((svg, i) =>
+    svg.addEventListener("dblclick", () => {
+      ViewFit.reset(i === 0 ? mainFit : detailFit);
+      render();
+    })
+  );
 
   linkRatio(false);
   render();
