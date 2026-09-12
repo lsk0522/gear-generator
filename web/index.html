@@ -4,6 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>기어 제너레이터</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+<link rel="stylesheet" as="style" crossorigin
+  href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -25,19 +28,19 @@
 
     <div class="field">
       <label>모듈 <span class="unit">mm</span></label>
-      <input id="in-module" type="number" step="0.05" min="0.05" value="1.25" />
+      <input id="in-module" type="number" step="0.05" value="1.25" min="0.05" max="5" />
     </div>
     <div class="field">
       <label>플렉스스플라인 잇수 (zf)</label>
-      <input id="in-zf" type="number" step="1" min="20" value="100" />
+      <input id="in-zf" type="number" step="1" value="100" min="20" max="400" />
     </div>
     <div class="field">
       <label>서큘러스플라인 잇수 (zc)</label>
-      <input id="in-zc" type="number" step="1" min="21" value="102" />
+      <input id="in-zc" type="number" step="1" value="102" min="21" max="402" />
     </div>
     <div class="field">
       <label>감속비 (1 : i) <span class="unit">= zf 로 자동 환산</span></label>
-      <input id="in-ratio" type="number" step="1" min="1" value="50" />
+      <input id="in-ratio" type="number" step="1" value="50" min="1" max="200" />
     </div>
 
     <details class="advanced">
@@ -45,19 +48,19 @@
       <div class="adv-grid">
         <div class="field">
           <label>이끝 높이 계수 ha*</label>
-          <input id="in-ha" type="number" step="0.05" value="1.0" />
+          <input id="in-ha" type="number" step="0.05" value="1.0" min="0.5" max="1.5" />
         </div>
         <div class="field">
           <label>이뿌리 깊이 계수 hd*</label>
-          <input id="in-hd" type="number" step="0.05" value="1.0" />
+          <input id="in-hd" type="number" step="0.05" value="1.0" min="0.5" max="1.5" />
         </div>
         <div class="field">
           <label>최대 반경변형 계수 w0*</label>
-          <input id="in-w0" type="number" step="0.05" value="1.0" />
+          <input id="in-w0" type="number" step="0.05" value="1.0" min="0.3" max="2" />
         </div>
         <div class="field">
           <label>이빨각 α0 <span class="unit">deg</span></label>
-          <input id="in-toothangle" type="number" step="0.1" min="0" value="9.17" />
+          <input id="in-toothangle" type="number" step="0.1" value="9.17" min="0" max="21" />
         </div>
         <div class="field">
           <label>이 두께 비율 (원주피치 대비)</label>
@@ -65,19 +68,19 @@
         </div>
         <div class="field">
           <label>이뿌리 필렛 (×m)</label>
-          <input id="in-rootfillet" type="number" step="0.01" min="0" value="0.15" />
+          <input id="in-rootfillet" type="number" step="0.01" value="0.15" min="0" max="0.45" />
         </div>
         <div class="field">
           <label>백래시 공차 (×m)</label>
-          <input id="in-clearance" type="number" step="0.01" value="0.05" />
+          <input id="in-clearance" type="number" step="0.01" value="0.05" min="0" max="0.3" />
         </div>
         <div class="field">
           <label>FS 벽 두께 <span class="unit">mm</span></label>
-          <input id="in-wallflex" type="number" step="0.05" min="0.05" value="0.75" />
+          <input id="in-wallflex" type="number" step="0.05" value="0.75" min="0.05" max="5" />
         </div>
         <div class="field">
           <label>CS 벽 두께 <span class="unit">mm</span></label>
-          <input id="in-wallcirc" type="number" step="0.5" min="0.5" value="3.0" />
+          <input id="in-wallcirc" type="number" step="0.5" value="3.0" min="0.5" max="20" />
         </div>
       </div>
     </details>
@@ -154,23 +157,23 @@
 
     <div class="field">
       <label>감속비 (1 : i)</label>
-      <input id="cy-ratio" type="number" step="1" min="2" value="11" />
+      <input id="cy-ratio" type="number" step="1" value="11" min="2" max="60" />
     </div>
     <div class="field">
       <label>핀 피치원 반지름 (R) <span class="unit">mm</span></label>
-      <input id="cy-R" type="number" step="0.5" min="1" value="30" />
+      <input id="cy-R" type="number" step="0.5" value="30" min="1" max="120" />
     </div>
     <div class="field">
       <label>핀/롤러 반지름 (Rr) <span class="unit">mm</span></label>
-      <input id="cy-Rr" type="number" step="0.1" min="0.1" value="3" />
+      <input id="cy-Rr" type="number" step="0.1" value="3" min="0.1" max="12" />
     </div>
     <div class="field">
       <label>편심량 (E) <span class="unit">mm</span></label>
-      <input id="cy-E" type="number" step="0.05" min="0.01" value="1.5" />
+      <input id="cy-E" type="number" step="0.05" value="1.5" min="0.01" max="6" />
     </div>
     <div class="field">
       <label>디스크 두께 <span class="unit">mm</span></label>
-      <input id="cy-thickness" type="number" step="0.5" min="0.5" value="5" />
+      <input id="cy-thickness" type="number" step="0.5" value="5" min="0.5" max="40" />
     </div>
 
     <details class="advanced">
@@ -459,15 +462,15 @@
 
     <div class="field">
       <label>모듈 <span class="unit">mm</span></label>
-      <input id="pl-module" type="number" step="0.1" min="0.1" value="1.5" />
+      <input id="pl-module" type="number" step="0.1" value="1.5" min="0.1" max="6" />
     </div>
     <div class="field">
       <label>선기어 잇수 (Zs)</label>
-      <input id="pl-sun" type="number" step="1" min="8" value="15" />
+      <input id="pl-sun" type="number" step="1" value="15" min="8" max="80" />
     </div>
     <div class="field">
       <label>유성기어 잇수 (Zp)</label>
-      <input id="pl-planet" type="number" step="1" min="8" value="15" />
+      <input id="pl-planet" type="number" step="1" value="15" min="8" max="80" />
     </div>
     <div class="field">
       <label>유성기어 개수</label>
@@ -540,5 +543,6 @@
 <script src="planetary-app.js"></script>
 <script src="zoompan.js"></script>
 <script src="tabs.js"></script>
+<script src="controls.js"></script>
 </body>
 </html>
