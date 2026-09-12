@@ -19,6 +19,8 @@
     wallCirc: $("#in-wallcirc"),
     rotation: $("#in-rotation"),
     rotationVal: $("#in-rotation-val"),
+    gain: $("#in-gain"),
+    gainVal: $("#in-gain-val"),
     play: $("#in-play"),
     resultGrid: $("#result-grid"),
     metricGrid: $("#metric-grid"),
@@ -199,6 +201,14 @@
     return ((num(els.rotation, 0) || 0) * Math.PI) / 180;
   }
 
+  /** Display-only amplification of the wave-generator deflection. The real
+   * radial deflection is ~2% of the pitch radius: true to the physics but
+   * invisible, which makes the cam look like it turns independently of a
+   * perfectly round flexspline. DXF export always uses gain 1. */
+  function previewGain() {
+    return Math.max(1, num(els.gain, 4));
+  }
+
   function renderMainSvg(d, flex, circ, rest, bore) {
     const svg = els.svgMain;
     clear(svg);
@@ -222,24 +232,15 @@
     csPath.style.strokeWidth = "1";
     g.appendChild(csPath);
 
-    // Wave generator: the physical elliptical cam, drawn rotated to the
-    // current input angle (visual only - the flexspline deformation below
-    // already reflects the same physics via deformFlexspline).
-    const rot = rotationRad();
-    const wg = HDMath.waveGeneratorCam(d, 240);
-    const wgPath = svgEl("path", { d: loopToPathD(wg, scale, rot), fill: "none" });
-    wgPath.style.stroke = "var(--wg-stroke)";
-    wgPath.style.strokeWidth = "1.4";
-    wgPath.style.strokeDasharray = "4 3";
-    g.appendChild(wgPath);
-
     // Flexspline: physically deformed by the wave generator at this input
     // angle (deformFlexspline maps the SAME rest outline through the exact
     // elliptical neutral-line + section-rotation field the conjugate CS
     // profile above was derived from) - teeth engage the circular spline at
     // the major axis and clear it elsewhere; turning the slider sweeps the
     // mesh zone around the ring.
-    const def = HDMath.deformFlexspline(rest, rot);
+    const rot = rotationRad();
+    const gain = previewGain();
+    const def = HDMath.deformFlexspline(rest, rot, gain);
     const fsPath = svgEl("path", {
       d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
       "fill-rule": "evenodd",
@@ -249,6 +250,16 @@
     fsPath.style.strokeWidth = "1";
     fsPath.style.opacity = "0.92";
     g.appendChild(fsPath);
+
+    // Wave generator cam, drawn LAST so it stays visible over the
+    // flexspline it is pushing, and at the same preview gain so its major
+    // axis visibly lines up with the bulge it causes.
+    const wg = HDMath.waveGeneratorCam(d, 240, gain);
+    const wgPath = svgEl("path", { d: loopToPathD(wg, scale, rot), fill: "none" });
+    wgPath.style.stroke = "var(--wg-stroke)";
+    wgPath.style.strokeWidth = "1.6";
+    wgPath.style.strokeDasharray = "5 4";
+    g.appendChild(wgPath);
 
     for (const r of [d.rp]) {
       const c = svgEl("path", { d: loopToPathD(HDMath.circlePoints(r, 0, 0, 200), scale, 0), fill: "none" });
@@ -283,7 +294,7 @@
     g.appendChild(csPath);
 
     const rot = rotationRad();
-    const def = HDMath.deformFlexspline(rest, rot);
+    const def = HDMath.deformFlexspline(rest, rot, previewGain());
     const fsPath = svgEl("path", {
       d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
       "fill-rule": "evenodd",
@@ -389,6 +400,13 @@
     els.rotationVal.textContent = els.rotation.value + "°";
     redrawGeometry();
   });
+
+  if (els.gain) {
+    els.gain.addEventListener("input", () => {
+      els.gainVal.textContent = els.gain.value + "×";
+      redrawGeometry();
+    });
+  }
 
   // play / pause the wave-generator animation (mesh sweeps around the ring)
   let playing = false,

@@ -16,7 +16,9 @@ if not defined PYCMD (
 
 if defined PYCMD (
     start "" cmd /c "timeout /t 1 /nobreak >nul & start "" http://localhost:%PORT%/"
-    %PYCMD% -m http.server %PORT%
+    rem serve.py disables caching, so editing a file and reloading never
+    rem leaves a new index.html running against stale cached scripts
+    %PYCMD% serve.py %PORT%
     goto :eof
 )
 

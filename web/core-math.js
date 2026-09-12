@@ -514,7 +514,13 @@
    *     radius rho + h*cos(mu) with tangential offset +h*sin(mu) (via
    *     rotateIntoSection / polarPlace, same as conjugateSlot uses).
    */
-  function deformFlexspline(rest, omega) {
+  function deformFlexspline(rest, omega, gain) {
+    // `gain` amplifies the displacement for display only: the same mode
+    // shape at k times the amplitude. The real radial deflection is ~2% of
+    // the pitch radius, which is invisible on screen and makes the cam look
+    // like it spins independently of a perfectly round flexspline. Geometry
+    // used for export always runs at gain = 1.
+    const g = gain > 0 ? gain : 1;
     const d = { a: rest.a, b: rest.b, rm: rest.rm, w0: rest.w0 };
     const phiFs = (-omega * rest.dz) / rest.zf;
 
@@ -524,11 +530,12 @@
         const aBody = aArr[i] + phiFs;
         const h = rArr[i] - rest.rm;
         const def = waveDeform(d, aBody - omega);
-        const cosM = Math.cos(def.mu),
-          sinM = Math.sin(def.mu);
+        const mu = def.mu * g;
+        const cosM = Math.cos(mu),
+          sinM = Math.sin(mu);
         const sec = rotateIntoSection(0, h, cosM, sinM);
-        const R = def.rho,
-          T = aBody + def.v / rest.rm;
+        const R = rest.rm + (def.rho - rest.rm) * g,
+          T = aBody + (def.v * g) / rest.rm;
         const rad = R + sec.r;
         const ang = T + sec.t / (rad || 1);
         out[i] = { x: rad * Math.cos(ang), y: rad * Math.sin(ang) };
@@ -659,14 +666,28 @@
   // Wave generator cam (for the 3D solid, unchanged model from rev 1)
   // ---------------------------------------------------------------------
 
-  function waveGeneratorCam(d, nSeg) {
+  /**
+   * The physical cam profile: the deformed neutral line pulled in by half the
+   * flexspline wall, i.e. the surface the cam has to present to push the rim
+   * out to rho(psi).
+   *
+   * Angles use the same convention as everything else here - measured from
+   * +X via (r*cos, r*sin) - so the major axis (psi = 0, where rho peaks at a)
+   * lands at angle 0. That matters: deformFlexspline() puts the flexspline
+   * bulge at the input angle omega, so a cam drawn in this convention and
+   * rotated by omega points AT the bulge. An earlier revision built this one
+   * curve in the (r*sin, r*cos) "compass" convention instead, which left the
+   * cam rendering 90 degrees out of phase with the deformation it causes.
+   */
+  function waveGeneratorCam(d, nSeg, gain) {
     nSeg = nSeg || 240;
+    const g = gain > 0 ? gain : 1; // display-only amplification, as above
     const pts = [];
     for (let i = 0; i <= nSeg; i++) {
       const phi = (2 * Math.PI * i) / nSeg;
       const def = waveDeform(d, phi);
-      const r = def.rho - d.wallFlex / 2;
-      pts.push({ x: r * Math.sin(phi), y: r * Math.cos(phi) });
+      const r = d.rm + (def.rho - d.rm) * g - d.wallFlex / 2;
+      pts.push({ x: r * Math.cos(phi), y: r * Math.sin(phi) });
     }
     return pts;
   }

@@ -30,6 +30,12 @@ jobs:
       - name: Setup Pages
         uses: actions/configure-pages@v5
 
+      # Stamp the commit onto every asset URL. Without this a returning
+      # visitor can end up running a new index.html against cached older
+      # scripts - a mix that fails in confusing, tab-specific ways.
+      - name: Cache-bust asset URLs
+        run: sed -i "s/?v=dev/?v=${GITHUB_SHA::7}/g" web/index.html
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:

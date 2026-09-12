@@ -436,12 +436,16 @@ def spline_profile(d, zs, zf, wall, clearance, n_bins=256, steps=500):
 
 
 def wave_generator_cam(d, n_seg=240):
+    """Physical cam profile: the deformed neutral line pulled in by half the
+    flexspline wall. Angles measured from +X via (r*cos, r*sin), matching
+    every other curve here, so the major axis (psi=0, where rho peaks) sits
+    at angle 0 - see the note in core-math.js waveGeneratorCam()."""
     pts = []
     for i in range(n_seg + 1):
         phi = 2 * math.pi * i / n_seg
         deform = wave_deform(d, phi)
         r = deform["rho"] - d["wallFlex"] / 2.0
-        pts.append((r * math.sin(phi), r * math.cos(phi)))
+        pts.append((r * math.cos(phi), r * math.sin(phi)))
     return pts
 
 

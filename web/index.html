@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="stylesheet" as="style" crossorigin
   href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
-<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="style.css?v=dev" />
 </head>
 <body>
 <div class="tabbar">
@@ -93,6 +93,13 @@
       </div>
     </div>
 
+    <div class="field">
+      <label>변형 과장 <span class="unit" id="in-gain-val">4×</span></label>
+      <div class="slider-row">
+        <input id="in-gain" type="range" min="1" max="20" step="1" value="4" />
+      </div>
+    </div>
+
     <div class="results">
       <h2>계산 결과</h2>
       <div id="warnings"></div>
@@ -117,7 +124,12 @@
       치형(Eq. 9–13)과 이빨각 α0 절단(Sec. 3.3)을 그대로 구현하고,
       서큘러스플라인 치형은 실제 수치 envelope(Eq. 14–15, 파형발생기 한 바퀴
       스윕에 대한 최대반경 래스터화)로 계산합니다 — 근사식이 아닙니다.
-      백래시·변형률·맞물림 개수는 1차 기하학적 추정치입니다. 생성된 형상은
+      백래시·변형률·맞물림 개수는 1차 기하학적 추정치입니다.
+      실제 반경 변형은 피치 반경의 약 2%라 눈에 보이지 않으므로, 미리보기에서는
+      <em>변형 과장</em> 배율로 같은 변형 형상을 키워서 보여줍니다 — 화면에만
+      적용되고 DXF 내보내기는 항상 실제 치수(1배)입니다. 배율을 올리면 장축에서
+      이가 서로 겹쳐 보이는데, 실제 간섭이 아니라 과장 배율 때문입니다
+      (1×에서는 정확히 맞물립니다). 생성된 형상은
       개념 검증용 기하 데이터이며, 실제 제작 전 반드시 강도/탄성/공차 검증이
       필요합니다. Fusion 360 애드인: <code>fusion360_addin/HarmonicDriveGenerator</code>.
     </div>
@@ -443,12 +455,12 @@
 </div>
 </section>
 
-<script src="core-math.js"></script>
-<script src="dxf-writer.js"></script>
-<script src="viewfit.js"></script>
-<script src="app.js"></script>
-<script src="cycloidal-math.js"></script>
-<script src="cycloidal-app.js"></script>
+<script src="core-math.js?v=dev"></script>
+<script src="dxf-writer.js?v=dev"></script>
+<script src="viewfit.js?v=dev"></script>
+<script src="app.js?v=dev"></script>
+<script src="cycloidal-math.js?v=dev"></script>
+<script src="cycloidal-app.js?v=dev"></script>
 <section class="tabpanel" id="panel-planet" hidden>
 <div class="app">
   <aside class="sidebar">
@@ -537,12 +549,12 @@
 </div>
 </section>
 
-<script src="involute-math.js"></script>
-<script src="universal-math.js"></script>
-<script src="universal-app.js"></script>
-<script src="planetary-app.js"></script>
-<script src="zoompan.js"></script>
-<script src="tabs.js"></script>
-<script src="controls.js"></script>
+<script src="involute-math.js?v=dev"></script>
+<script src="universal-math.js?v=dev"></script>
+<script src="universal-app.js?v=dev"></script>
+<script src="planetary-app.js?v=dev"></script>
+<script src="zoompan.js?v=dev"></script>
+<script src="tabs.js?v=dev"></script>
+<script src="controls.js?v=dev"></script>
 </body>
 </html>
