@@ -114,17 +114,8 @@
     return { cx: p.E * Math.cos(t), cy: p.E * Math.sin(t), phi: -theta / (p.N - 1) };
   }
 
-  function xf(pt, pose) {
-    const c = Math.cos(pose.phi),
-      s = Math.sin(pose.phi);
-    return { x: pose.cx + pt.x * c - pt.y * s, y: pose.cy + pt.x * s + pt.y * c };
-  }
-
-  function xfLoop(loop, pose) {
-    return loop.map((pt) => xf(pt, pose));
-  }
-
   let currentP = null;
+  let playing = false;
 
   function driveRad() {
     return (num(els.drive, 0) * Math.PI) / 180;
@@ -183,16 +174,30 @@
     return CycloMath.circlePoints(r, cx, cy, nSeg || 90);
   }
 
-  function buildSceneSvg(svg, p, W, H, scale, showBore, drive) {
+  // The disc is a rigid body: discPose() is a rotation by phi followed by a
+  // shift to (cx, cy), so nothing about the disc's shape depends on the drive
+  // angle. Emit each outline once at the identity pose and give the moving
+  // assembly an SVG transform, rather than pushing every point through that
+  // pose in JS and rebuilding the path text each frame. loopToPathD negates
+  // Y, so a +phi model rotation is -phi in SVG.
+  //
+  // The bore, output holes and journal all share the disc's pose, so they ride
+  // in the same group. A circle centred on the origin is unchanged by the
+  // rotation, which is why the journal can sit there rather than at (cx, cy).
+  function poseTransform(pose, scale) {
+    const X = (pose.cx * scale).toFixed(2),
+      Y = (-pose.cy * scale).toFixed(2),
+      A = ((-pose.phi * 180) / Math.PI).toFixed(3);
+    return "translate(" + X + "," + Y + ") rotate(" + A + ")";
+  }
+
+  function buildSceneSvg(svg, p, W, H, scale, showBore) {
     clear(svg);
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
+    svg.setAttribute("viewBox", "0 0 " + W + " " + H);
+    const g = svgEl("g", { transform: "translate(" + W / 2 + "," + H / 2 + ")" });
     svg.appendChild(g);
 
-    const theta = drive || 0;
-    const pose = discPose(p, theta, false);
-
-    // fixed ring pins (housing) — drawn first, behind the disc
+    // fixed ring pins (housing) - drawn first, behind the disc
     if (p.makeRing) {
       for (const pin of CycloMath.pinCenters(p)) {
         const c = svgEl("path", { d: circlePathD(pin.r, pin.x, pin.y, scale) });
@@ -204,42 +209,49 @@
       }
     }
 
-    // disc 1 (posed)
-    const disc = xfLoop(CycloMath.discOutline(p, false), pose);
-    const discPath = svgEl("path", { d: loopToPathD(disc, scale) });
+    // everything that rides with disc 1
+    const disc1 = svgEl("g");
+    g.appendChild(disc1);
+    const discPath = svgEl("path", { d: loopToPathD(CycloMath.discOutline(p, false), scale) });
     discPath.style.fill = "var(--cs-fill)";
     discPath.style.stroke = "var(--cs-stroke)";
     discPath.style.strokeWidth = "1.2";
     discPath.style.opacity = "0.92";
-    g.appendChild(discPath);
+    disc1.appendChild(discPath);
 
+    // ... and with the 180-degree-opposed twin
+    let disc2 = null;
     if (p.twin) {
-      const pose2 = discPose(p, theta, true);
-      const disc2 = xfLoop(CycloMath.discOutline(p, true), pose2);
-      const disc2Path = svgEl("path", { d: loopToPathD(disc2, scale), fill: "none" });
+      disc2 = svgEl("g");
+      g.appendChild(disc2);
+      const disc2Path = svgEl("path", {
+        d: loopToPathD(CycloMath.discOutline(p, true), scale),
+        fill: "none",
+      });
       disc2Path.style.stroke = "var(--accent2)";
       disc2Path.style.strokeWidth = "1.2";
       disc2Path.style.strokeDasharray = "5 3";
       disc2Path.style.opacity = "0.85";
-      g.appendChild(disc2Path);
+      disc2.appendChild(disc2Path);
     }
 
     if (showBore && p.makeBore) {
-      const bore = xfLoop(circleLoop(p.boreDia / 2, 0, 0, 120), pose);
-      const b = svgEl("path", { d: loopToPathD(bore, scale), fill: "none" });
-      b.style.stroke = "#ffffff55";
+      const b = svgEl("path", {
+        d: loopToPathD(circleLoop(p.boreDia / 2, 0, 0, 120), scale),
+        fill: "none",
+      });
+      b.style.stroke = "var(--canvas-line)";
       b.style.strokeWidth = "1";
       b.style.strokeDasharray = "3 3";
-      g.appendChild(b);
+      disc1.appendChild(b);
     }
 
     if (showBore && p.makeHoles) {
       for (const h of CycloMath.outputHoleCenters(p)) {
-        const loop = xfLoop(circleLoop(h.r, h.x, h.y, 60), pose);
-        const c = svgEl("path", { d: loopToPathD(loop, scale), fill: "none" });
-        c.style.stroke = "#ffffff55";
+        const c = svgEl("path", { d: loopToPathD(circleLoop(h.r, h.x, h.y, 60), scale), fill: "none" });
+        c.style.stroke = "var(--canvas-line)";
         c.style.strokeWidth = "1";
-        g.appendChild(c);
+        disc1.appendChild(c);
       }
     }
 
@@ -250,65 +262,93 @@
       shaft.style.stroke = "var(--wg-stroke)";
       shaft.style.strokeWidth = "1.4";
       g.appendChild(shaft);
-      const j1 = svgEl("path", { d: circlePathD(sg.journalR, pose.cx, pose.cy, scale), fill: "none" });
+      const j1 = svgEl("path", { d: circlePathD(sg.journalR, 0, 0, scale), fill: "none" });
       j1.style.stroke = "var(--wg-stroke)";
       j1.style.strokeWidth = "1.4";
-      g.appendChild(j1);
-      if (p.twin) {
-        const pose2 = discPose(p, theta, true);
-        const j2 = svgEl("path", { d: circlePathD(sg.journalR, pose2.cx, pose2.cy, scale), fill: "none" });
+      disc1.appendChild(j1);
+      if (disc2) {
+        const j2 = svgEl("path", { d: circlePathD(sg.journalR, 0, 0, scale), fill: "none" });
         j2.style.stroke = "var(--wg-stroke)";
         j2.style.strokeWidth = "1.4";
         j2.style.strokeDasharray = "3 2";
-        g.appendChild(j2);
+        disc2.appendChild(j2);
       }
     }
 
-    return g;
+    return { svg: svg, p: p, scale: scale, disc1: disc1, disc2: disc2, moving: disc2 ? [disc1, disc2] : [disc1] };
+  }
+
+  function poseSceneSvg(sc, p, theta) {
+    sc.disc1.setAttribute("transform", poseTransform(discPose(p, theta, false), sc.scale));
+    if (sc.disc2) sc.disc2.setAttribute("transform", poseTransform(discPose(p, theta, true), sc.scale));
   }
 
   const mainFit = ViewFit.make(),
     detailFit = ViewFit.make();
 
+  // cached scenes, rebuilt only when the geometry or the fit scale changes
+  let mainScene = null,
+    detailScene = null;
+
+  // Moving by transform alone lets the browser keep each group's rasterised
+  // bitmap across frames instead of re-rasterising the disc every time; the
+  // hint is what makes it do so. Only while the animation runs, since each
+  // promoted layer costs a bitmap the size of its bounding box.
+  function setAnimating(on) {
+    for (const sc of [mainScene, detailScene]) {
+      if (!sc) continue;
+      for (const el of sc.moving) el.style.willChange = on ? "transform" : "";
+    }
+  }
+
   function renderMainSvg(p) {
     const W = 900,
       H = 900;
     const scale = ViewFit.fit(mainFit, W, 0.46, p.R + p.Rr + 4, 0, 0).scale;
-    buildSceneSvg(els.svgMain, p, W, H, scale, true, driveRad());
+    if (!mainScene || mainScene.p !== p || mainScene.scale !== scale) {
+      mainScene = buildSceneSvg(els.svgMain, p, W, H, scale, true);
+      if (playing) setAnimating(true);
+    }
+    poseSceneSvg(mainScene, p, driveRad());
   }
 
   function renderDetailSvg(p) {
     const W = 500,
       H = 500;
-    const theta = driveRad();
-    // zoom on the contact zone near the top pin (angle +90°, i.e. +y)
+    // zoom on the contact zone near the top pin (angle +90 deg, i.e. +y)
     const scale = ViewFit.fit(detailFit, W, 0.21, p.Rr + Math.abs(p.E) + 1, 0, 0).scale;
-    clear(els.svgDetail);
-    els.svgDetail.setAttribute("viewBox", `0 0 ${W} ${H}`);
-    const focus = { x: 0, y: p.R }; // the top fixed pin — where a lobe engages
-    const g = svgEl("g", {
-      transform: `translate(${W / 2 - focus.x * scale},${H / 2 + focus.y * scale})`,
-    });
-    els.svgDetail.appendChild(g);
+    if (!detailScene || detailScene.p !== p || detailScene.scale !== scale) {
+      clear(els.svgDetail);
+      els.svgDetail.setAttribute("viewBox", "0 0 " + W + " " + H);
+      const focus = { x: 0, y: p.R }; // the top fixed pin - where a lobe engages
+      const g = svgEl("g", {
+        transform: "translate(" + (W / 2 - focus.x * scale) + "," + (H / 2 + focus.y * scale) + ")",
+      });
+      els.svgDetail.appendChild(g);
 
-    // fixed pins near the top
-    for (const pin of CycloMath.pinCenters(p)) {
-      const c = svgEl("path", { d: circlePathD(pin.r, pin.x, pin.y, scale) });
-      c.style.fill = "var(--fs-fill)";
-      c.style.stroke = "var(--fs-stroke)";
-      c.style.strokeWidth = "1.2";
-      c.style.opacity = "0.9";
-      g.appendChild(c);
+      // fixed pins near the top
+      for (const pin of CycloMath.pinCenters(p)) {
+        const c = svgEl("path", { d: circlePathD(pin.r, pin.x, pin.y, scale) });
+        c.style.fill = "var(--fs-fill)";
+        c.style.stroke = "var(--fs-stroke)";
+        c.style.strokeWidth = "1.2";
+        c.style.opacity = "0.9";
+        g.appendChild(c);
+      }
+      // posed disc, showing the lobe/pin engagement
+      const disc1 = svgEl("g");
+      g.appendChild(disc1);
+      const discPath = svgEl("path", { d: loopToPathD(CycloMath.discOutline(p, false), scale) });
+      discPath.style.fill = "var(--cs-fill)";
+      discPath.style.stroke = "var(--cs-stroke)";
+      discPath.style.strokeWidth = "1.5";
+      discPath.style.opacity = "0.92";
+      disc1.appendChild(discPath);
+
+      detailScene = { svg: els.svgDetail, p: p, scale: scale, disc1: disc1, disc2: null, moving: [disc1] };
+      if (playing) setAnimating(true);
     }
-    // posed disc, showing the lobe/pin engagement
-    const pose = discPose(p, theta, false);
-    const disc = xfLoop(CycloMath.discOutline(p, false), pose);
-    const discPath = svgEl("path", { d: loopToPathD(disc, scale) });
-    discPath.style.fill = "var(--cs-fill)";
-    discPath.style.stroke = "var(--cs-stroke)";
-    discPath.style.strokeWidth = "1.5";
-    discPath.style.opacity = "0.92";
-    g.appendChild(discPath);
+    poseSceneSvg(detailScene, p, driveRad());
   }
 
   function download(filename, text) {
@@ -441,7 +481,6 @@
   );
 
   // play / pause the eccentric-driven meshing animation
-  let playing = false;
   let rafId = null;
   let lastT = 0;
   function tick(t) {
@@ -459,6 +498,7 @@
   els.play.addEventListener("click", () => {
     playing = !playing;
     els.play.textContent = playing ? "⏸ 정지" : "▶ 재생";
+    setAnimating(playing);
     if (playing) {
       lastT = 0;
       rafId = requestAnimationFrame(tick);
@@ -470,6 +510,7 @@
     if (document.hidden && playing) {
       playing = false;
       els.play.textContent = "▶ 재생";
+      setAnimating(false);
       if (rafId) cancelAnimationFrame(rafId);
     }
   });

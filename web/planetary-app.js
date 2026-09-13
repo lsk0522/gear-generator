@@ -138,32 +138,47 @@
     return arr;
   }
 
-  function buildScene(g, p, scale, D) {
-    const opt = { alpha: ALPHA };
-    const { thetaS, gamma } = kinematics(p, D);
-    const centers = planetCenters(p, gamma);
+  // Every body in a planetary train is rigid: involuteGear/involuteRing return
+  // the same outline merely rotated and translated (checked numerically - a
+  // gear re-derived at another phase and centre matches the origin outline put
+  // through that transform to ~1e-14 mm). So the tooth geometry never needs
+  // re-tessellating while the animation runs. buildScene emits each outline
+  // once at phase 0 about the origin; poseScene then only writes transforms.
+  //
+  // loopToPathD negates Y, so a +theta rotation in model space is -theta in
+  // SVG, and a model centre (x,y) is (x*scale, -y*scale) on screen.
+  function deg(rad) {
+    return ((rad * 180) / Math.PI).toFixed(3);
+  }
 
-    // ring: outer circle + internal involute (even-odd => annulus with teeth)
-    const beta0 = centers[0].beta;
-    const phiP0 = planetPhase(p, beta0, thetaS);
-    const phiR = ringPhase(p, beta0, phiP0);
-    const ringInner = Involute.involuteRing(p.Zr, p.m, phiR, 0, 0, opt);
+  function buildScene(g, p, scale) {
+    const opt = { alpha: ALPHA };
+
+    // ring: outer circle + internal involute (even-odd => annulus with teeth).
+    // The outer circle is rotationally symmetric, so spinning the combined
+    // path to the ring's tooth phase leaves the rim looking identical.
+    const ringInner = Involute.involuteRing(p.Zr, p.m, 0, 0, 0, opt);
     const ringOuterLoop = Involute.circlePoints(p.ringOuter, 0, 0, 260);
-    fill(g, loopToPathD(ringOuterLoop, scale) + " " + loopToPathD(ringInner, scale), "--wg-fill", "--wg-stroke", "1.2", "0.95", true);
+    const ring = fill(
+      g,
+      loopToPathD(ringOuterLoop, scale) + " " + loopToPathD(ringInner, scale),
+      "--wg-fill",
+      "--wg-stroke",
+      "1.2",
+      "0.95",
+      true
+    );
 
     // carrier arms (behind gears)
-    for (const c of centers) {
-      const arm = svgEl("line", {
-        x1: 0,
-        y1: 0,
-        x2: (c.x * scale).toFixed(2),
-        y2: (-c.y * scale).toFixed(2),
-      });
+    const arms = [];
+    for (let k = 0; k < p.Np; k++) {
+      const arm = svgEl("line", { x1: 0, y1: 0, x2: 0, y2: 0 });
       arm.style.stroke = "var(--accent2)";
       arm.style.strokeWidth = "6";
       arm.style.strokeLinecap = "round";
       arm.style.opacity = "0.5";
       g.appendChild(arm);
+      arms.push(arm);
     }
     const hub = svgEl("path", { d: circlePathD(p.rs * 0.5, 0, 0, scale) });
     hub.style.fill = "var(--accent2)";
@@ -171,51 +186,114 @@
     g.appendChild(hub);
 
     // sun
-    fill(g, loopToPathD(Involute.involuteGear(p.Zs, p.m, thetaS, 0, 0, opt), scale), "--cs-fill", "--cs-stroke", "1.2");
+    const sun = fill(
+      g,
+      loopToPathD(Involute.involuteGear(p.Zs, p.m, 0, 0, 0, opt), scale),
+      "--cs-fill",
+      "--cs-stroke",
+      "1.2"
+    );
 
-    // planets
-    for (const c of centers) {
-      const phiP = planetPhase(p, c.beta, thetaS);
-      fill(g, loopToPathD(Involute.involuteGear(p.Zp, p.m, phiP, c.x, c.y, opt), scale), "--fs-fill", "--fs-stroke", "1.2");
-      // planet centre pin
-      const pin = svgEl("path", { d: circlePathD(p.m * 0.6, c.x, c.y, scale) });
+    // planets - all the same tooth count, so one outline serves every one
+    const planetD = loopToPathD(Involute.involuteGear(p.Zp, p.m, 0, 0, 0, opt), scale);
+    const pinD = circlePathD(p.m * 0.6, 0, 0, scale);
+    const planets = [],
+      pins = [];
+    for (let k = 0; k < p.Np; k++) {
+      planets.push(fill(g, planetD, "--fs-fill", "--fs-stroke", "1.2"));
+      const pin = svgEl("path", { d: pinD });
       pin.style.fill = "var(--accent2)";
       pin.style.opacity = "0.7";
       g.appendChild(pin);
+      pins.push(pin);
     }
+
+    return { g, scale, ring, arms, sun, planets, pins, moving: [ring, sun, ...planets, ...pins] };
+  }
+
+  // Because every body now moves by transform alone, its rasterised bitmap
+  // stays valid across frames - the browser only has to re-composite it. The
+  // hint is what makes it actually cache them, and it is worth ~24 ms/frame
+  // here. Only while the animation runs, though: each promoted layer costs a
+  // bitmap the size of its bounding box, and the ring's is the whole view.
+  function setAnimating(on) {
+    for (const sc of [mainScene, detailScene]) {
+      if (!sc) continue;
+      for (const el of sc.moving) el.style.willChange = on ? "transform" : "";
+    }
+  }
+
+  function poseScene(sc, p, D) {
+    const { thetaS, gamma } = kinematics(p, D);
+    const centers = planetCenters(p, gamma);
+
+    const beta0 = centers[0].beta;
+    const phiR = ringPhase(p, beta0, planetPhase(p, beta0, thetaS));
+    sc.ring.setAttribute("transform", `rotate(${deg(-phiR)})`);
+    sc.sun.setAttribute("transform", `rotate(${deg(-thetaS)})`);
+
+    for (let k = 0; k < centers.length; k++) {
+      const c = centers[k];
+      const X = (c.x * sc.scale).toFixed(2),
+        Y = (-c.y * sc.scale).toFixed(2);
+      sc.arms[k].setAttribute("x2", X);
+      sc.arms[k].setAttribute("y2", Y);
+      sc.planets[k].setAttribute(
+        "transform",
+        `translate(${X},${Y}) rotate(${deg(-planetPhase(p, c.beta, thetaS))})`
+      );
+      sc.pins[k].setAttribute("transform", `translate(${X},${Y})`);
+    }
+    return gamma;
   }
 
   const mainFit = ViewFit.make(),
     detailFit = ViewFit.make();
 
+  // cached scenes, rebuilt only when the geometry or the fit scale changes
+  let mainScene = null,
+    detailScene = null;
+
   function renderMain(p, D) {
     const svg = els.svgMain;
-    clear(svg);
     const W = 900,
       H = 900;
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const scale = ViewFit.fit(mainFit, W, 0.47, p.ringOuter, 0, 0).scale;
-    const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
-    svg.appendChild(g);
-    buildScene(g, p, scale, D);
+    if (!mainScene || mainScene.p !== p || mainScene.scale !== scale) {
+      clear(svg);
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
+      svg.appendChild(g);
+      mainScene = buildScene(g, p, scale);
+      mainScene.p = p;
+      if (playing) setAnimating(true);
+    }
+    poseScene(mainScene, p, D);
   }
 
   function renderDetail(p, D) {
     const svg = els.svgDetail;
-    clear(svg);
     const W = 500,
       H = 500;
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     // scale is frozen against value edits; the focus still tracks the meshing
     // contact live so it stays centred while the gears spin during animation.
     const scale = ViewFit.fit(detailFit, W, 0.5, 8 * p.m, 0, 0).scale;
-    const { gamma } = kinematics(p, D);
-    const beta0 = gamma;
-    const fx = p.rs * Math.cos(beta0),
-      fy = p.rs * Math.sin(beta0);
-    const g = svgEl("g", { transform: `translate(${W / 2 - fx * scale},${H / 2 + fy * scale})` });
-    svg.appendChild(g);
-    buildScene(g, p, scale, D);
+    if (!detailScene || detailScene.p !== p || detailScene.scale !== scale) {
+      clear(svg);
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      const g = svgEl("g");
+      svg.appendChild(g);
+      detailScene = buildScene(g, p, scale);
+      detailScene.p = p;
+      if (playing) setAnimating(true);
+    }
+    const gamma = poseScene(detailScene, p, D);
+    const fx = p.rs * Math.cos(gamma),
+      fy = p.rs * Math.sin(gamma);
+    detailScene.g.setAttribute(
+      "transform",
+      `translate(${W / 2 - fx * scale},${H / 2 + fy * scale})`
+    );
   }
 
   function renderResults(p) {
@@ -355,6 +433,7 @@
   els.play.addEventListener("click", () => {
     playing = !playing;
     els.play.textContent = playing ? "⏸ 정지" : "▶ 재생";
+    setAnimating(playing);
     if (playing) {
       lastT = 0;
       rafId = requestAnimationFrame(tick);
@@ -364,6 +443,7 @@
     if (document.hidden && playing) {
       playing = false;
       els.play.textContent = "▶ 재생";
+      setAnimating(false);
       if (rafId) cancelAnimationFrame(rafId);
     }
   });
