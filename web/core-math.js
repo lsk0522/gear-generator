@@ -514,13 +514,7 @@
    *     radius rho + h*cos(mu) with tangential offset +h*sin(mu) (via
    *     rotateIntoSection / polarPlace, same as conjugateSlot uses).
    */
-  function deformFlexspline(rest, omega, gain) {
-    // `gain` amplifies the displacement for display only: the same mode
-    // shape at k times the amplitude. The real radial deflection is ~2% of
-    // the pitch radius, which is invisible on screen and makes the cam look
-    // like it spins independently of a perfectly round flexspline. Geometry
-    // used for export always runs at gain = 1.
-    const g = gain > 0 ? gain : 1;
+  function deformFlexspline(rest, omega) {
     const d = { a: rest.a, b: rest.b, rm: rest.rm, w0: rest.w0 };
     const phiFs = (-omega * rest.dz) / rest.zf;
 
@@ -530,12 +524,11 @@
         const aBody = aArr[i] + phiFs;
         const h = rArr[i] - rest.rm;
         const def = waveDeform(d, aBody - omega);
-        const mu = def.mu * g;
-        const cosM = Math.cos(mu),
-          sinM = Math.sin(mu);
+        const cosM = Math.cos(def.mu),
+          sinM = Math.sin(def.mu);
         const sec = rotateIntoSection(0, h, cosM, sinM);
-        const R = rest.rm + (def.rho - rest.rm) * g,
-          T = aBody + (def.v * g) / rest.rm;
+        const R = def.rho,
+          T = aBody + def.v / rest.rm;
         const rad = R + sec.r;
         const ang = T + sec.t / (rad || 1);
         out[i] = { x: rad * Math.cos(ang), y: rad * Math.sin(ang) };
@@ -679,14 +672,13 @@
    * curve in the (r*sin, r*cos) "compass" convention instead, which left the
    * cam rendering 90 degrees out of phase with the deformation it causes.
    */
-  function waveGeneratorCam(d, nSeg, gain) {
+  function waveGeneratorCam(d, nSeg) {
     nSeg = nSeg || 240;
-    const g = gain > 0 ? gain : 1; // display-only amplification, as above
     const pts = [];
     for (let i = 0; i <= nSeg; i++) {
       const phi = (2 * Math.PI * i) / nSeg;
       const def = waveDeform(d, phi);
-      const r = d.rm + (def.rho - d.rm) * g - d.wallFlex / 2;
+      const r = def.rho - d.wallFlex / 2;
       pts.push({ x: r * Math.cos(phi), y: r * Math.sin(phi) });
     }
     return pts;

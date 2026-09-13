@@ -19,8 +19,6 @@
     wallCirc: $("#in-wallcirc"),
     rotation: $("#in-rotation"),
     rotationVal: $("#in-rotation-val"),
-    gain: $("#in-gain"),
-    gainVal: $("#in-gain-val"),
     play: $("#in-play"),
     resultGrid: $("#result-grid"),
     metricGrid: $("#metric-grid"),
@@ -201,13 +199,6 @@
     return ((num(els.rotation, 0) || 0) * Math.PI) / 180;
   }
 
-  /** Display-only amplification of the wave-generator deflection. The real
-   * radial deflection is ~2% of the pitch radius: true to the physics but
-   * invisible, which makes the cam look like it turns independently of a
-   * perfectly round flexspline. DXF export always uses gain 1. */
-  function previewGain() {
-    return Math.max(1, num(els.gain, 4));
-  }
 
   function renderMainSvg(d, flex, circ, rest, bore) {
     const svg = els.svgMain;
@@ -239,8 +230,7 @@
     // the major axis and clear it elsewhere; turning the slider sweeps the
     // mesh zone around the ring.
     const rot = rotationRad();
-    const gain = previewGain();
-    const def = HDMath.deformFlexspline(rest, rot, gain);
+    const def = HDMath.deformFlexspline(rest, rot);
     const fsPath = svgEl("path", {
       d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
       "fill-rule": "evenodd",
@@ -252,9 +242,8 @@
     g.appendChild(fsPath);
 
     // Wave generator cam, drawn LAST so it stays visible over the
-    // flexspline it is pushing, and at the same preview gain so its major
-    // axis visibly lines up with the bulge it causes.
-    const wg = HDMath.waveGeneratorCam(d, 240, gain);
+    // flexspline it is pushing.
+    const wg = HDMath.waveGeneratorCam(d, 240);
     const wgPath = svgEl("path", { d: loopToPathD(wg, scale, rot), fill: "none" });
     wgPath.style.stroke = "var(--wg-stroke)";
     wgPath.style.strokeWidth = "1.6";
@@ -294,7 +283,7 @@
     g.appendChild(csPath);
 
     const rot = rotationRad();
-    const def = HDMath.deformFlexspline(rest, rot, previewGain());
+    const def = HDMath.deformFlexspline(rest, rot);
     const fsPath = svgEl("path", {
       d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
       "fill-rule": "evenodd",
@@ -401,12 +390,6 @@
     redrawGeometry();
   });
 
-  if (els.gain) {
-    els.gain.addEventListener("input", () => {
-      els.gainVal.textContent = els.gain.value + "×";
-      redrawGeometry();
-    });
-  }
 
   // play / pause the wave-generator animation (mesh sweeps around the ring)
   let playing = false,
