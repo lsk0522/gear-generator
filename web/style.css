@@ -2,13 +2,16 @@
    기어 제너레이터 — Liquid glass design system
    ---------------------------------------------------------------------------
    Layered translucent surfaces over a soft colour wash, hairline borders with
-   an inset specular highlight, and generous radii. Light theme by default,
-   dark via prefers-color-scheme; both share one set of tokens, so the gear
-   colours the SVG previews read from JS adapt to the theme automatically.
+   an inset specular highlight, and generous radii. Light is the default and
+   dark is opt-in via the header switch (data-theme="dark" on the root), NOT
+   the OS setting - the toggle is the single source of truth, and light being
+   the base means the first paint is correct with no flash. Both themes share
+   one set of tokens, so the gear colours the SVG previews read from JS adapt
+   to the theme automatically.
    =========================================================================== */
 
 :root {
-  color-scheme: light dark;
+  color-scheme: light;
 
   /* type */
   --font: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
@@ -75,50 +78,49 @@
   --accent2: #e8820c;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0a0c11;
-    --wash-1: rgba(10, 132, 255, 0.22);
-    --wash-2: rgba(255, 159, 10, 0.16);
-    --wash-3: rgba(52, 199, 89, 0.12);
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0a0c11;
+  --wash-1: rgba(10, 132, 255, 0.22);
+  --wash-2: rgba(255, 159, 10, 0.16);
+  --wash-3: rgba(52, 199, 89, 0.12);
 
-    --glass: rgba(30, 34, 44, 0.6);
-    --glass-strong: rgba(38, 43, 55, 0.78);
-    --glass-sunken: rgba(4, 6, 10, 0.35);
-    --hairline: rgba(255, 255, 255, 0.1);
-    --hairline-soft: rgba(255, 255, 255, 0.07);
-    --specular: rgba(255, 255, 255, 0.14);
-    --shadow-lg: 0 24px 60px -16px rgba(0, 0, 0, 0.7), 0 4px 14px -4px rgba(0, 0, 0, 0.5);
-    --shadow-sm: 0 2px 10px -2px rgba(0, 0, 0, 0.5);
+  --glass: rgba(30, 34, 44, 0.6);
+  --glass-strong: rgba(38, 43, 55, 0.78);
+  --glass-sunken: rgba(4, 6, 10, 0.35);
+  --hairline: rgba(255, 255, 255, 0.1);
+  --hairline-soft: rgba(255, 255, 255, 0.07);
+  --specular: rgba(255, 255, 255, 0.14);
+  --shadow-lg: 0 24px 60px -16px rgba(0, 0, 0, 0.7), 0 4px 14px -4px rgba(0, 0, 0, 0.5);
+  --shadow-sm: 0 2px 10px -2px rgba(0, 0, 0, 0.5);
 
-    --text: #f2f4f8;
-    --muted: #a2acbb;
-    --faint: #78828f;
+  --text: #f2f4f8;
+  --muted: #a2acbb;
+  --faint: #78828f;
 
-    --accent: #5cc8ff;
-    --accent-soft: rgba(92, 200, 255, 0.16);
-    --accent-text: #7fd4ff;
-    --warn: #ffce54;
-    --warn-bg: rgba(255, 206, 84, 0.12);
-    --warn-line: rgba(255, 206, 84, 0.35);
-    --danger: #ff7a6e;
-    --danger-bg: rgba(255, 107, 107, 0.13);
-    --danger-line: rgba(255, 107, 107, 0.35);
+  --accent: #5cc8ff;
+  --accent-soft: rgba(92, 200, 255, 0.16);
+  --accent-text: #7fd4ff;
+  --warn: #ffce54;
+  --warn-bg: rgba(255, 206, 84, 0.12);
+  --warn-line: rgba(255, 206, 84, 0.35);
+  --danger: #ff7a6e;
+  --danger-bg: rgba(255, 107, 107, 0.13);
+  --danger-line: rgba(255, 107, 107, 0.35);
 
-    --canvas: radial-gradient(120% 120% at 50% 0%, #171b24 0%, #0e1116 70%, #0a0c11 100%);
-    --canvas-line: rgba(255, 255, 255, 0.07);
-    --cs-fill: rgba(92, 200, 255, 0.2);
-    --cs-stroke: #6fc3ff;
-    --fs-fill: rgba(255, 176, 87, 0.22);
-    --fs-stroke: #ffb057;
-    --wg-fill: rgba(111, 227, 138, 0.18);
-    --wg-stroke: #6fe38a;
-    --g1-fill: rgba(92, 200, 255, 0.2);
-    --g1-stroke: #6fc3ff;
-    --g2-fill: rgba(255, 176, 87, 0.22);
-    --g2-stroke: #ffb057;
-    --accent2: #ffb057;
-  }
+  --canvas: radial-gradient(120% 120% at 50% 0%, #171b24 0%, #0e1116 70%, #0a0c11 100%);
+  --canvas-line: rgba(255, 255, 255, 0.07);
+  --cs-fill: rgba(92, 200, 255, 0.2);
+  --cs-stroke: #6fc3ff;
+  --fs-fill: rgba(255, 176, 87, 0.22);
+  --fs-stroke: #ffb057;
+  --wg-fill: rgba(111, 227, 138, 0.18);
+  --wg-stroke: #6fe38a;
+  --g1-fill: rgba(92, 200, 255, 0.2);
+  --g1-stroke: #6fc3ff;
+  --g2-fill: rgba(255, 176, 87, 0.22);
+  --g2-stroke: #ffb057;
+  --accent2: #ffb057;
 }
 
 * {
@@ -241,6 +243,72 @@ body::before {
 
 .tabpanel[hidden] {
   display: none;
+}
+
+/* ---- theme switch (injected into the header by controls.js) ---- */
+.theme-switch {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-pill);
+  background: var(--glass-sunken);
+  border: 1px solid var(--hairline-soft);
+  box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.theme-switch button {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--faint);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1;
+  width: 32px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r-pill);
+  cursor: pointer;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease), transform 0.12s var(--ease);
+}
+
+.theme-switch button:hover {
+  color: var(--text);
+}
+
+.theme-switch button:active {
+  transform: scale(0.94);
+}
+
+.theme-switch button[aria-pressed="true"] {
+  color: var(--accent-text);
+  background: var(--glass-strong);
+  border-color: var(--hairline);
+  box-shadow: inset 0 1px 0 var(--specular), var(--shadow-sm);
+}
+
+.theme-switch button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Cross-fade the surfaces when the theme flips. Scoped to a class the
+   toggle adds for the duration, so the first paint never animates. */
+:root.theme-animating,
+:root.theme-animating body,
+:root.theme-animating .tabbar,
+:root.theme-animating .sidebar,
+:root.theme-animating .panel,
+:root.theme-animating .panel svg,
+:root.theme-animating .ctl,
+:root.theme-animating button.dl,
+:root.theme-animating .result-grid {
+  transition: background-color 0.28s var(--ease), color 0.28s var(--ease),
+    border-color 0.28s var(--ease);
 }
 
 /* ---------------------------------------------------------------------------

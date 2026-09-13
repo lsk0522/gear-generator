@@ -223,8 +223,60 @@
     bar.prepend(brand);
   }
 
+  // Light/dark switch. The inline script in <head> has already applied the
+  // stored choice before first paint; this only builds the control and keeps
+  // it in sync, so nothing here can cause a flash.
+  function addThemeSwitch() {
+    const bar = document.querySelector(".tabbar");
+    if (!bar || bar.querySelector(".theme-switch")) return;
+
+    const box = document.createElement("div");
+    box.className = "theme-switch";
+    box.setAttribute("role", "group");
+    box.setAttribute("aria-label", "테마");
+
+    const modes = [
+      { id: "light", glyph: "☀", label: "라이트 테마" },
+      { id: "dark", glyph: "☾", label: "다크 테마" },
+    ];
+
+    const buttons = modes.map((m) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.dataset.mode = m.id;
+      b.textContent = m.glyph;
+      b.title = m.label;
+      b.setAttribute("aria-label", m.label);
+      b.addEventListener("click", () => apply(m.id, true));
+      box.appendChild(b);
+      return b;
+    });
+
+    function apply(mode, animate) {
+      const root = document.documentElement;
+      if (animate && root.dataset.theme !== mode) {
+        root.classList.add("theme-animating");
+        clearTimeout(apply._t);
+        apply._t = setTimeout(() => root.classList.remove("theme-animating"), 320);
+      }
+      root.dataset.theme = mode;
+      try {
+        localStorage.setItem("gg-theme", mode);
+      } catch (e) {
+        /* private mode — the switch still works for this visit */
+      }
+      buttons.forEach((b) =>
+        b.setAttribute("aria-pressed", b.dataset.mode === mode ? "true" : "false")
+      );
+    }
+
+    apply(document.documentElement.dataset.theme === "dark" ? "dark" : "light", false);
+    bar.appendChild(box);
+  }
+
   function init() {
     addBrand();
+    addThemeSwitch();
     document.querySelectorAll('.field input[type="number"]').forEach(enhanceNumber);
     document.querySelectorAll(".tabpanel").forEach((panel) => {
       // bubbling, so this runs after the app's own per-input handlers have

@@ -10,9 +10,10 @@ everything with no-store so a reload always gets the current files.
 
     python serve.py [port]
 """
+import os
 import sys
 from functools import partial
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 
 class NoCacheHandler(SimpleHTTPRequestHandler):
@@ -28,9 +29,11 @@ class NoCacheHandler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8000
-    handler = partial(NoCacheHandler, directory=".")
+    # serve this file's own folder, so it works from any cwd
+    root = os.path.dirname(os.path.abspath(__file__))
+    handler = partial(NoCacheHandler, directory=root)
     print("서빙: http://localhost:%d/  (Ctrl+C 종료, 캐시 비활성)" % port)
     try:
-        HTTPServer(("", port), handler).serve_forever()
+        ThreadingHTTPServer(("", port), handler).serve_forever()
     except KeyboardInterrupt:
         print("\n종료")

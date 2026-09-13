@@ -4,6 +4,14 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>기어 제너레이터</title>
+<script>
+  // Apply the stored theme before the first paint so dark never flashes white.
+  // Light is the default: we deliberately ignore prefers-color-scheme.
+  try {
+    if (localStorage.getItem("gg-theme") === "dark")
+      document.documentElement.dataset.theme = "dark";
+  } catch (e) {}
+</script>
 <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
 <link rel="stylesheet" as="style" crossorigin
   href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" />
