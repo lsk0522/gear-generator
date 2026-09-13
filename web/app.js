@@ -151,6 +151,8 @@
     els.metricGrid.innerHTML = "";
     clear(els.svgMain);
     clear(els.svgDetail);
+    // the cached layers point at the nodes we just detached
+    mainScene = detailScene = null;
   }
 
   function renderResults(d, flex, circ) {
@@ -200,99 +202,126 @@
   }
 
 
+  // Scene caches. The circular spline outline is ~410 KB of path text at a
+  // typical tooth count, and it is RIGID - identical at every wave generator
+  // angle. Rebuilding it per frame (which is what clear()+rebuild did) cost
+  // more than everything else in the animation put together. So the static
+  // layers are built once per geometry and only the flexspline, which really
+  // does deform, is re-posed each frame.
+  let mainScene = null,
+    detailScene = null;
+
   function renderMainSvg(d, flex, circ, rest, bore) {
     const svg = els.svgMain;
-    clear(svg);
     const W = 900,
       H = 900;
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     const outerR = circ.outerRadius;
     const scale = ViewFit.fit(mainFit, W, 0.46, outerR, 0, 0).scale;
-    const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
-    svg.appendChild(g);
-
-    // Circular spline: outer circle + conjugate-slot boundary, evenodd. Rigid
-    // and fixed - never redrawn differently across the WG animation.
-    const csOuter = HDMath.circlePoints(outerR, 0, 0, 300);
-    const csPath = svgEl("path", {
-      d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(circ.inner, scale, 0),
-      "fill-rule": "evenodd",
-    });
-    csPath.style.fill = "var(--cs-fill)";
-    csPath.style.stroke = "var(--cs-stroke)";
-    csPath.style.strokeWidth = "1";
-    g.appendChild(csPath);
-
-    // Flexspline: physically deformed by the wave generator at this input
-    // angle (deformFlexspline maps the SAME rest outline through the exact
-    // elliptical neutral-line + section-rotation field the conjugate CS
-    // profile above was derived from) - teeth engage the circular spline at
-    // the major axis and clear it elsewhere; turning the slider sweeps the
-    // mesh zone around the ring.
     const rot = rotationRad();
-    const def = HDMath.deformFlexspline(rest, rot);
-    const fsPath = svgEl("path", {
-      d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
-      "fill-rule": "evenodd",
-    });
-    fsPath.style.fill = "var(--fs-fill)";
-    fsPath.style.stroke = "var(--fs-stroke)";
-    fsPath.style.strokeWidth = "1";
-    fsPath.style.opacity = "0.92";
-    g.appendChild(fsPath);
 
-    // Wave generator cam, drawn LAST so it stays visible over the
-    // flexspline it is pushing.
-    const wg = HDMath.waveGeneratorCam(d, 240);
-    const wgPath = svgEl("path", { d: loopToPathD(wg, scale, rot), fill: "none" });
-    wgPath.style.stroke = "var(--wg-stroke)";
-    wgPath.style.strokeWidth = "1.6";
-    wgPath.style.strokeDasharray = "5 4";
-    g.appendChild(wgPath);
+    if (!mainScene || mainScene.svg !== svg || mainScene.circ !== circ || mainScene.scale !== scale) {
+      clear(svg);
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      const g = svgEl("g", { transform: `translate(${W / 2},${H / 2})` });
+      svg.appendChild(g);
 
-    for (const r of [d.rp]) {
-      const c = svgEl("path", { d: loopToPathD(HDMath.circlePoints(r, 0, 0, 200), scale, 0), fill: "none" });
-      c.style.stroke = "#ffffff33";
-      c.style.strokeWidth = "0.75";
-      c.style.strokeDasharray = "2 4";
-      g.appendChild(c);
+      // Circular spline: outer circle + conjugate-slot boundary, evenodd.
+      const csOuter = HDMath.circlePoints(outerR, 0, 0, 300);
+      const csPath = svgEl("path", {
+        d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(circ.inner, scale, 0),
+        "fill-rule": "evenodd",
+      });
+      csPath.style.fill = "var(--cs-fill)";
+      csPath.style.stroke = "var(--cs-stroke)";
+      csPath.style.strokeWidth = "1";
+      g.appendChild(csPath);
+
+      // Flexspline: physically deformed by the wave generator at this input
+      // angle (deformFlexspline maps the SAME rest outline through the exact
+      // elliptical neutral-line + section-rotation field the conjugate CS
+      // profile above was derived from) - teeth engage the circular spline at
+      // the major axis and clear it elsewhere; turning the slider sweeps the
+      // mesh zone around the ring.
+      const fsPath = svgEl("path", { "fill-rule": "evenodd" });
+      fsPath.style.fill = "var(--fs-fill)";
+      fsPath.style.stroke = "var(--fs-stroke)";
+      fsPath.style.strokeWidth = "1";
+      fsPath.style.opacity = "0.92";
+      g.appendChild(fsPath);
+
+      // Wave generator cam, drawn LAST so it stays visible over the
+      // flexspline it is pushing. Its shape is fixed and only its angle
+      // changes, so it is posed with a transform rather than re-emitted.
+      // loopToPathD negates Y, so a +rot in model space is -rot in SVG.
+      const wgPath = svgEl("path", {
+        d: loopToPathD(HDMath.waveGeneratorCam(d, 240), scale, 0),
+        fill: "none",
+      });
+      wgPath.style.stroke = "var(--wg-stroke)";
+      wgPath.style.strokeWidth = "1.6";
+      wgPath.style.strokeDasharray = "5 4";
+      g.appendChild(wgPath);
+
+      const ref = svgEl("path", {
+        d: loopToPathD(HDMath.circlePoints(d.rp, 0, 0, 200), scale, 0),
+        fill: "none",
+      });
+      ref.style.stroke = "var(--canvas-line)";
+      ref.style.strokeWidth = "0.75";
+      ref.style.strokeDasharray = "2 4";
+      g.appendChild(ref);
+
+      mainScene = { svg, circ, scale, fsPath, wgPath };
     }
+
+    const def = HDMath.deformFlexspline(rest, rot);
+    mainScene.fsPath.setAttribute(
+      "d",
+      loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0)
+    );
+    mainScene.wgPath.setAttribute("transform", `rotate(${(-rot * 180) / Math.PI})`);
   }
 
   function renderDetailSvg(d, flex, circ, rest, bore) {
     const svg = els.svgDetail;
-    clear(svg);
     const W = 500,
       H = 500;
-    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
     // Fixed camera at the top (+Y) - the mesh zone sweeps past it as the WG
     // rotation angle changes, matching the main view's "play" animation.
     const scale = ViewFit.fit(detailFit, W, 0.42, 9 * d.m, 0, 0).scale;
-    const focusR = (d.rp + flex.tipRadius) / 2;
-    const g = svgEl("g", { transform: `translate(${W / 2},${H / 2 + focusR * scale})` });
-    svg.appendChild(g);
 
-    const csOuter = HDMath.circlePoints(circ.outerRadius, 0, 0, 400);
-    const csPath = svgEl("path", {
-      d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(circ.inner, scale, 0),
-      "fill-rule": "evenodd",
-    });
-    csPath.style.fill = "var(--cs-fill)";
-    csPath.style.stroke = "var(--cs-stroke)";
-    csPath.style.strokeWidth = "1.2";
-    g.appendChild(csPath);
+    if (!detailScene || detailScene.svg !== svg || detailScene.circ !== circ || detailScene.scale !== scale) {
+      clear(svg);
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      const focusR = (d.rp + flex.tipRadius) / 2;
+      const g = svgEl("g", { transform: `translate(${W / 2},${H / 2 + focusR * scale})` });
+      svg.appendChild(g);
 
-    const rot = rotationRad();
-    const def = HDMath.deformFlexspline(rest, rot);
-    const fsPath = svgEl("path", {
-      d: loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0),
-      "fill-rule": "evenodd",
-    });
-    fsPath.style.fill = "var(--fs-fill)";
-    fsPath.style.stroke = "var(--fs-stroke)";
-    fsPath.style.strokeWidth = "1.2";
-    fsPath.style.opacity = "0.92";
-    g.appendChild(fsPath);
+      const csOuter = HDMath.circlePoints(circ.outerRadius, 0, 0, 400);
+      const csPath = svgEl("path", {
+        d: loopToPathD(csOuter, scale, 0) + " " + loopToPathD(circ.inner, scale, 0),
+        "fill-rule": "evenodd",
+      });
+      csPath.style.fill = "var(--cs-fill)";
+      csPath.style.stroke = "var(--cs-stroke)";
+      csPath.style.strokeWidth = "1.2";
+      g.appendChild(csPath);
+
+      const fsPath = svgEl("path", { "fill-rule": "evenodd" });
+      fsPath.style.fill = "var(--fs-fill)";
+      fsPath.style.stroke = "var(--fs-stroke)";
+      fsPath.style.strokeWidth = "1.2";
+      fsPath.style.opacity = "0.92";
+      g.appendChild(fsPath);
+
+      detailScene = { svg, circ, scale, fsPath };
+    }
+
+    const def = HDMath.deformFlexspline(rest, rotationRad());
+    detailScene.fsPath.setAttribute(
+      "d",
+      loopToPathD(def.outer, scale, 0) + " " + loopToPathD(def.inner, scale, 0)
+    );
   }
 
   function download(filename, text) {
