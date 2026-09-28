@@ -138,6 +138,7 @@ web/
   zoompan.js            Ctrl+휠 확대 / 더블클릭 리셋
   tabs.js               탭 전환
 fusion360_addin/        애드인 3종
+  vendor-originals/     서드파티 애드인 2종의 원본 배포 zip (대조용)
 run.bat                 로컬 서버 실행 (Windows)
 ```
 
